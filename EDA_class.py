@@ -28,6 +28,8 @@ class pascalET():
     class_counts = None
     pixel_num = None
     fix_nums = None
+    classwise_num_pixels = None
+    classwise_ratios = None
     
     
     
@@ -95,21 +97,25 @@ class pascalET():
         plt.legend()
         plt.imshow(im)
         
-    def basic_stats(self):
-        from matplotlib.ticker import PercentFormatter
+    def basic_hists(self):
         #goals: 
-            #histogram of num of class instances
-            #histogram of aspect ratios 
-            #histogram of number of pixels in images (complete and per class)
+            #histogram of num of class instances[done]
+            #histogram of aspect ratios [done]
+            #histogram of number of pixels in images (complete and per class) [done]
+            #means and variances histograms of both ratio and number of pixels 
             #sum of number of fixations on image 
         
         classdict = {0:"aeroplane",1:"bicycle",2:"boat",3:"cat",4:"cow",5:"diningtable",6:"dog",7:"horse",8:"motorbike",9:"sofa"}
         self.class_count = {v: k for k, v in classdict.items()}
         self.ratios = []
         self.num_pixels = []
+        color_list = [] #for saving same color per class as list format
         
-        
+        self.classwise_num_pixels = []
+        self.classwise_ratios = []
+        #RATIOS
         ax = plt.gca()
+        plt.figure(figsize=(1920/160, 1080/160), dpi=160)
         for i,j in enumerate(self.classes):
             print("Round: {}".format(i))
             self.load_images_for_class(i)
@@ -117,7 +123,8 @@ class pascalET():
             self.class_count[j] = self.eyeData.shape[0]
             tmp_ratios = []
             tmp_num_pixels = []
-            
+            #self.classwise_ratios.append([]) #list of lists
+            #self.classwise_num_pixels.append([])
             plt.suptitle("Ratios, classwise")
             for k in range(len(self.im_dims)):
                 #for stats on complete dataset
@@ -126,33 +133,72 @@ class pascalET():
                 #for stats on class: 
                 tmp_ratios.append(self.im_dims[k][1]/self.im_dims[k][0]) #weirdly enough, image-format is stored as height, width 
                 tmp_num_pixels.append(self.im_dims[k][1]*self.im_dims[k][0]) #weirdly enough, image-format is stored as height, width 
-            
+            self.classwise_ratios.append(tmp_ratios)
+            self.classwise_num_pixels.append(tmp_num_pixels)
             plt.subplot(2,5,i+1)
             color = next(ax._get_lines.prop_cycler)['color']
-            print(color)
+            color_list.append(color)
             plt.hist(tmp_ratios,bins=30,range=(0,4),color = color)
-            plt.title("Class: {}".format(j))
-                
+            plt.title("Class: {}".format(j))    
         
-        plt.show()
-        print(self.class_count)
-        print(len(self.ratios))
-        print(len(self.num_pixels))
+        plt.savefig("/home/max/Documents/s194119/Bachelor/Graphs/ratios-classwise.pdf",format="pdf",dpi=160)
+        
+        
+        #overall data-set image-ratios
         plt.figure(200)
         plt.hist(self.ratios,bins=100)
-        plt.show()
+        plt.savefig("/home/max/Documents/s194119/Bachelor/Graphs/ratios-overall.pdf",format="pdf",dpi=160)
+    
+        #number of class-instances:
+        plt.figure(num=199,figsize=(1920/160,1080/160),dpi=160)
+        plt.bar(self.class_count.keys(),self.class_count.values(),color=color_list)
+        plt.savefig("/home/max/Documents/s194119/Bachelor/Graphs/class-balance.pdf",format="pdf",dpi=160)
         
+        #total ds pixelnumbers
+        plt.figure(201)
+        plt.hist(self.num_pixels,bins=15)
+        plt.savefig("/home/max/Documents/s194119/Bachelor/Graphs/overall_num_pixels.pdf",format="pdf",dpi=160)
         
+        #classwise pixelnumbers (same loop as earlier for ratios)
+        ax = plt.gca()
+        plt.figure(num=202,figsize=(1920/160, 1080/160), dpi=160)
+        plt.suptitle("Total number of pixels, classwise")
+        for i,j in enumerate(self.classes):
+            plt.subplot(2,5,i+1)
+            color = next(ax._get_lines.prop_cycler)['color']
+            plt.hist(self.classwise_num_pixels[i],color=color)
+            plt.title("Class: {}".format(j))    
+        plt.savefig("/home/max/Documents/s194119/Bachelor/Graphs/classwise_numpx.pdf",format="pdf",dpi=160)
             
+        
+    def basic_stats(self): #cannot run w/o basic_hist()
+        #show means and variances of 1: ratios, 2: pixel-numbers
+        ratio_means = []
+        ratio_var = []
+        for i in range(len(self.classwise_ratios)): 
+            ratio_means.append(sum(self.classwise_ratios[i])/len(self.classwise_ratios[i])) #(looks a bit funny because list of lists)
+            ratio_var.append(np.var(self.classwise_ratios[i]))
+        num_px_means = []
+        num_px_var = []
+        for i in range(len(self.classwise_num_pixels)):
+            num_px_means.append(sum(self.classwise_num_pixels[i])/len(self.classwise_num_pixels[i])) #(looks a bit funny because list of lists)
+            num_px_var.append(np.var(self.classwise_num_pixels[i])) #values are huge, but when looking at mean it seems to be quite fine
             
-            #self.load_images_for_class()
+        print("Classwise ratio means: \n",ratio_means)
+        print("Classwise ratio vars: \n",ratio_var)
+        print("Classwise num_px means: \n",num_px_means)
+        print("Classwise num_px vars: \n",num_px_var)
         
         
-      
+        
+        
+        
+DEBUG = False
 dset = pascalET()
 dset.loadmat()
-if("DEBUG"==True):
+if(DEBUG==True):
     dset.load_images_for_class(9)
     dset.random_sample_plot()
 
+dset.basic_hists()
 dset.basic_stats()
