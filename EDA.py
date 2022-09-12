@@ -9,6 +9,9 @@ import scipy
 import numpy as np
 import os 
 
+
+
+
 A = scipy.io.loadmat('/home/max/Documents/s194119/Bachelor/Data/POETdataset/etData/etData_sofa.mat',squeeze_me=True,struct_as_record=False)
 etData = A["etData"]
 #etData[0].fixations[0].imgCoord.fixR.pos
