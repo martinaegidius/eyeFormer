@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 from matplotlib import image
 import cv2
 
+DEBUG = True
+
 class pascalET():
     classes = ["aeroplane","bicycle","boat","cat","cow","diningtable","dog","horse","motorbike","sofa"]
     p = os.path.dirname((__file__))
@@ -30,6 +32,7 @@ class pascalET():
     fix_nums = None
     classwise_num_pixels = None
     classwise_ratios = None
+    bbox = None
     
     
     
@@ -60,10 +63,12 @@ class pascalET():
         self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
         self.filename = []
         self.im_dims = []
+        self.bbox = []
         for i,j in enumerate(self.etData[num]): #i is image, k is patient
             self.filename.append(self.etData[num][i].filename + ".jpg")
             self.im_dims.append(self.etData[num][i].dimensions)
             #print(j)
+            self.bbox.append(self.etData[num][i].gtbb)
             
             for k in range(5):
                 #w_max = self.im_dims[i][1] #for removing irrelevant points
@@ -77,25 +82,92 @@ class pascalET():
                 self.eyeData[i,k,0] = BP #fill with matrix
         
         print("Loading complete. Loaded ",self.eyeData.shape[0], " images.")                
-      
+    
+    
     def random_sample_plot(self):
+        from matplotlib.patches import Rectangle
+        #random.seed(18)
         num = random.randint(0,self.eyeData.shape[0])
         path = self.p + "/Data/POETdataset/PascalImages/" +self.chosen_class+"_"+self.filename[num]
         im = image.imread(path)
         plt.title("{}:{}".format(self.chosen_class,self.filename[num]))
         #now for eye-tracking-data
+        
         ax = plt.gca()
+        global x 
+        global y
+        global lol
+        lol = self.bbox[num]
+        xy,w,h = self.get_bounding_box(self.bbox[num])
+        rect = Rectangle(xy,w,h,linewidth=1, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
+        
         for i in range(self.NUM_TRACKERS):
+            color = next(ax._get_lines.prop_cycler)['color']
             mylabel = str(i+1)
             num_fix = int(self.eyeData[num,i][0][:,0].shape[0]/2)
             print(num_fix) #number of fixations on img
             #Left eye
-            color = next(ax._get_lines.prop_cycler)['color']
             plt.scatter(self.eyeData[num,i][0][:,0],self.eyeData[num,i][0][:,1],alpha=0.8,label=mylabel,color = color) #wrong - you are not plotting pairwise here, you are plotting R as function of L 
             plt.plot(self.eyeData[num,i][0][0:num_fix,0],self.eyeData[num,i][0][0:num_fix,1],label=str(),color= color)
             plt.plot(self.eyeData[num,i][0][num_fix:,0],self.eyeData[num,i][0][num_fix:,1],label=str(),color = color)
         plt.legend()
         plt.imshow(im)
+        
+    def specific_plot(self,classOC,filename):
+        from matplotlib.patches import Rectangle
+        classdict = {0:"aeroplane",1:"bicycle",2:"boat",3:"cat",4:"cow",5:"diningtable",6:"dog",7:"horse",8:"motorbike",9:"sofa"}    
+        self.chosen_class = classdict[classOC]
+        
+        try: 
+            idx = self.filename.index(filename) #get index of requested file
+        except:
+            print("Filename not found in loaded data. Did you type correctly?")
+            return
+        
+        
+        path = self.p + "/Data/POETdataset/PascalImages/" +self.chosen_class+"_"+filename
+        fig = plt.figure(3201)
+        im = image.imread(path)
+        plt.title("{}:{}".format(self.chosen_class,filename))
+        #now for eye-tracking-data
+        
+        ax = plt.gca()
+        lol = self.bbox[idx]
+        xy,w,h = self.get_bounding_box(self.bbox[idx])
+        rect = Rectangle(xy,w,h,linewidth=1, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
+        
+        for i in range(self.NUM_TRACKERS):
+            color = next(ax._get_lines.prop_cycler)['color']
+            mylabel = str(i+1)
+            num_fix = int(self.eyeData[idx,i][0][:,0].shape[0]/2)
+            print(num_fix) #number of fixations on img
+            #Left eye
+            plt.scatter(self.eyeData[idx,i][0][:,0],self.eyeData[idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #wrong - you are not plotting pairwise here, you are plotting R as function of L 
+            plt.plot(self.eyeData[idx,i][0][0:num_fix,0],self.eyeData[idx,i][0][0:num_fix,1],label=str(),color= color)
+            plt.plot(self.eyeData[idx,i][0][num_fix:,0],self.eyeData[idx,i][0][num_fix:,1],label=str(),color = color)
+        plt.legend()
+        plt.imshow(im)
+        
+        
+    def get_bounding_box(self,inClass):
+        #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
+        
+        # x = np.empty((inClass.shape[-1]//2)+2) #multiple bboxes may be present
+        # y = np.empty((inClass.shape[-1]//2)+2) #multiple bboxes may be present
+        # assert x.shape[0]==4
+        if(inClass.ndim>1):
+            inClass = inClass[0]
+        # x[:2] = inClass[0::2]
+        # x[2:] = inClass[::-1][-3::2]
+        # y[:2] = inClass[1]
+        # y[2:4] = inClass[-1]
+        xy = (inClass[0],inClass[1])
+        w = inClass[2]-inClass[0]
+        h = inClass[-1]-inClass[1]
+        #y = [inClass[1],inClass[-1]]
+        return xy,w,h
         
     def basic_hists(self):
         #goals: 
@@ -193,12 +265,13 @@ class pascalET():
         
         
         
-DEBUG = False
+
 dset = pascalET()
 dset.loadmat()
 if(DEBUG==True):
     dset.load_images_for_class(9)
     dset.random_sample_plot()
 
-dset.basic_hists()
-dset.basic_stats()
+#dset.basic_hists()
+#dset.basic_stats()
+dset.specific_plot(9,"2009_003646.jpg")
