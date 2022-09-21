@@ -82,7 +82,7 @@ class pascalET():
                 self.eyeData[i,k,0] = BP #fill with matrix
         
         print("Loading complete. Loaded ",self.eyeData.shape[0], " images.")                
-    
+        #Remember that format for eye-tracking data is (num_instances,num_persons,1). In the one dimension, a matrix is saved, consisting of [LP,RP]-signals.
     
     def random_sample_plot(self):
         from matplotlib.patches import Rectangle
@@ -98,8 +98,8 @@ class pascalET():
         global y
         global lol
         lol = self.bbox[num]
-        xy,w,h = self.get_bounding_box(self.bbox[num])
-        rect = Rectangle(xy,w,h,linewidth=1, edgecolor='r', facecolor='none')
+        x,y,w,h = self.get_bounding_box(self.bbox[num])
+        rect = Rectangle((x,y),w,h,linewidth=1, edgecolor='r', facecolor='none')
         ax.add_patch(rect)
         
         for i in range(self.NUM_TRACKERS):
@@ -114,7 +114,7 @@ class pascalET():
         plt.legend()
         plt.imshow(im)
         
-    def specific_plot(self,classOC,filename):
+    def specific_plot(self,classOC,filename,resized=False):
         from matplotlib.patches import Rectangle
         classdict = {0:"aeroplane",1:"bicycle",2:"boat",3:"cat",4:"cow",5:"diningtable",6:"dog",7:"horse",8:"motorbike",9:"sofa"}    
         self.chosen_class = classdict[classOC]
@@ -124,9 +124,12 @@ class pascalET():
         except:
             print("Filename not found in loaded data. Did you type correctly?")
             return
-        
-        
-        path = self.p + "/Data/POETdataset/PascalImages/" +self.chosen_class+"_"+filename
+            
+        if resized==False:
+            path = self.p + "/Data/POETdataset/PascalImages/" +self.chosen_class+"_"+filename
+        else:
+            path = self.p + "/Data/POETdataset/PascalImages/Resized/"+self.chosen_class+"_"+filename
+            
         fig = plt.figure(3201)
         im = image.imread(path)
         plt.title("{}:{}".format(self.chosen_class,filename))
@@ -134,8 +137,8 @@ class pascalET():
         
         ax = plt.gca()
         lol = self.bbox[idx]
-        xy,w,h = self.get_bounding_box(self.bbox[idx])
-        rect = Rectangle(xy,w,h,linewidth=1, edgecolor='r', facecolor='none')
+        x,y,w,h = self.get_bounding_box(self.bbox[idx])
+        rect = Rectangle((x,y),w,h,linewidth=1, edgecolor='r', facecolor='none')
         ax.add_patch(rect)
         
         for i in range(self.NUM_TRACKERS):
@@ -153,21 +156,13 @@ class pascalET():
         
     def get_bounding_box(self,inClass):
         #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
-        
-        # x = np.empty((inClass.shape[-1]//2)+2) #multiple bboxes may be present
-        # y = np.empty((inClass.shape[-1]//2)+2) #multiple bboxes may be present
-        # assert x.shape[0]==4
-        if(inClass.ndim>1):
+        if(inClass.ndim>1): #If more than one bounding box
             inClass = inClass[0]
-        # x[:2] = inClass[0::2]
-        # x[2:] = inClass[::-1][-3::2]
-        # y[:2] = inClass[1]
-        # y[2:4] = inClass[-1]
-        xy = (inClass[0],inClass[1])
+        xs = inClass[0] #upper left corner
+        ys = inClass[1] #upper left corner
         w = inClass[2]-inClass[0]
         h = inClass[-1]-inClass[1]
-        #y = [inClass[1],inClass[-1]]
-        return xy,w,h
+        return xs,ys,w,h
         
     def basic_hists(self):
         #goals: 
@@ -263,15 +258,3 @@ class pascalET():
         
         
         
-        
-        
-
-dset = pascalET()
-dset.loadmat()
-if(DEBUG==True):
-    dset.load_images_for_class(9)
-    dset.random_sample_plot()
-
-#dset.basic_hists()
-#dset.basic_stats()
-dset.specific_plot(9,"2009_003646.jpg")

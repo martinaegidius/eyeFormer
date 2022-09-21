@@ -11,6 +11,45 @@ import torch.nn as nn
 from torch.nn.functional import log_softmax, pad 
 import copy #for deepcopy
 import math
+import warnings
+
+
+# Set to False to skip notebook execution (e.g. for debugging)
+warnings.filterwarnings("ignore")
+RUN_EXAMPLES = True
+
+#HELPER_FUNCTIONS
+
+def is_interactive_notebook():
+    return __name__ == "__main__"
+
+
+def show_example(fn, args=[]):
+    if __name__ == "__main__" and RUN_EXAMPLES:
+        return fn(*args)
+
+
+def execute_example(fn, args=[]):
+    if __name__ == "__main__" and RUN_EXAMPLES:
+        fn(*args)
+
+
+class DummyOptimizer(torch.optim.Optimizer):
+    def __init__(self):
+        self.param_groups = [{"lr": 0}]
+        None
+
+    def step(self):
+        None
+
+    def zero_grad(self, set_to_none=False):
+        None
+
+
+class DummyScheduler:
+    def step(self):
+        None
+
 
 
 class EncoderDecoder(nn.Module):
@@ -56,11 +95,12 @@ class Encoder(nn.Module):
         super().__init__() #parent: nn.Module
         self.layers = clones(layer,N) #create stack
         self.norm = LayerNorm(layer.size) #define output-function
+        #Above line throws error
         
     def forward(self,x,mask):
         #pass input and mask through each layer in turn
         for layer in self.layers:
-            x = layer(x,mask)
+            x = layer(x, mask)
         return self.norm(x)
     
 class LayerNorm(nn.Module):
@@ -98,9 +138,9 @@ class EncoderLayer(nn.Module):
     def __init__(self,size,self_attn,feed_forward,dropout):
         super().__init__()
         self.self_attn = self_attn
-        self.size = size
         self.feed_forward = feed_forward
         self.sublayer = clones(SublayerConnection(size,dropout),2) #make two sublayer-instances of yet undefined type 
+        self.size = size
         
     def forward(self, x, mask):
         x = self.sublayer[0](x, lambda x: self.self_attn(x,x,x,mask)) #magical line, do not understand. Shoot through layer type 1 for all inputs 
@@ -218,9 +258,9 @@ class Embeddings(nn.Module):
         self.lut = nn.Embedding(vocab,d_model) #nn.Embeddings creates a look-up table by using size of vocabulary and d_model (size of each embedding vector). Output is matrix (*,H) with *: num of inputs and H: size of each embedding vec, ie d_model
         self.d_model = d_model
         
-        def forward(self,x):
-            return self.lut(x) * math.sqrt(self.d_model) #lut still takes input, as lut is a FUNCTION 
-    
+    def forward(self, x):
+        return self.lut(x) * math.sqrt(self.d_model) #lut still takes input, as lut is a FUNCTION 
+
 class PositionalEncoding(nn.Module):
     "Implement the PE function."
 
@@ -243,7 +283,56 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, : x.size(1)].requires_grad_(False)
         return self.dropout(x)
     
-    
+def make_model(
+    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1
+):
+    "Helper: Construct a model from hyperparameters."
+    c = copy.deepcopy
+    attn = MultiHeadedAttention(h, d_model)
+    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+    position = PositionalEncoding(d_model, dropout)
+    model = EncoderDecoder(
+        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
+        nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
+        nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
+        Generator(d_model, tgt_vocab),
+    )
 
+    # This was important from their code.
+    # Initialize parameters with Glorot / fan_avg.
+    for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+    return model
+
+def inference_test():
+    test_model = make_model(11,11,2)
+    test_model.eval()
+    src = torch.LongTensor([[1,2,3,4,5,6,7,8,9,10]])
+    src_mask = torch.ones(1,1,10)
+    
+    memory = test_model.encode(src,src_mask)
+    # ys = torch.zeros(1,1).type_as(src)
+    
+    # for i in range(9):
+    #   out = test_model.decode(
+    #       memory, src_mask, ys, subsequent_mask(ys.size(1)).type_as(src.data)
+    #   )
+    #   prob = test_model.generator(out[:, -1])
+    #   _, next_word = torch.max(prob, dim=1)
+    #   next_word = next_word.data[0]
+    #   ys = torch.cat(
+    #       [ys, torch.empty(1, 1).type_as(src.data).fill_(next_word)], dim=1
+    #   )
+
+    # print("Example Untrained Model Prediction:", ys)
+    
+def run_tests():
+    for _ in range(10):
+        inference_test()
+        
+show_example(run_tests)
+    
         
         
