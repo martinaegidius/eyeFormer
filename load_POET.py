@@ -32,8 +32,10 @@ class pascalET():
     fix_nums = None
     classwise_num_pixels = None
     classwise_ratios = None
-    bbox = None
+    bbox = None #old solution. Deprecated and should be deleted at some point
     num_files_in_class = []
+    eyeData_stats = None
+    bboxes = None #new solution
     
     
     
@@ -48,13 +50,25 @@ class pascalET():
         
         #self.eyeData = 
         
-    def convert_eyetracking_data(self,CLEANUP = False):
-        "Takes in mat-format and instead makes usable format."
+    def convert_eyetracking_data(self,CLEANUP: bool,STATS: bool):
+        """Takes in mat-format and instead makes usable format.
+            Args: 
+                CLEANUP: Bool. If true, remove all invalid fixations (outside of image)
+                STATS: Bool. If true, save statistics of eyeTracking-points
+                
+            Returns: 
+                Nothing. 
+                Mutates object instance by filling self.eyeData-matrix. 
+                Additionally saves fixation-statistics if stats = True.
+                
+                
+                
+        """
         
         #self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
         num = [x for x in range(10)] #classes
         
-        #get array-dim: 
+        #get maximal number of images in class for creating arrays which can hold all data: 
         max_dim = 0
         for cN in num: 
             cDim = len(self.etData[cN])
@@ -62,24 +76,82 @@ class pascalET():
                 max_dim=cDim
             self.num_files_in_class.append(cDim) #append value to structure, important for later slicing. 
         
-            
+        #allocate arrays
+        self.eyeData = np.empty((len(num),max_dim,self.NUM_TRACKERS),dtype=object) #format: [num_classes,max(num_images),num_trackers]. size: [9,1051,5,1] for complete dset. Last index holds list of eyetracking for person
+        self.im_dims = np.empty((len(num),max_dim,2))
+        self.bboxes = np.empty((len(num),max_dim),dtype=object) #has to be able to save lists of arrays, as some images have multiple bboxes. 
 
-        self.eyeData = np.empty((len(num),max_dim,self.NUM_TRACKERS),dtype=object) #size: [9,1051,5,1] for complete dset. Last index holds list of eyetracking for person
+
+        if(STATS==True): #for eyetracking-statistics
+            num_stats = 2 #number of fixes in bbox, number of fixes on image 
+            self.eyeData_stats = np.empty((len(num),max_dim,self.NUM_TRACKERS,num_stats)) #format: [classNo, imageNo, personNo, 2:(number of fixes, number of fixes in bbox)]
+        
 
         for cN in num: #class-number
             for i in range(len(self.etData[cN])):
-                for k in range(self.NUM_TRACKERS):
+                fixes_counter = 0  #reset image-wise
+                fixes_in_bbox_counter = 0
+                im_dims = self.etData[cN][i].dimensions[:2]
+                #print("Im dims: ",im_dims[0],im_dims[1])
+                self.im_dims[cN,i,:] = im_dims[:]
+                self.bboxes[cN,i] = [self.etData[cN][i].gtbb]
+                
+                if(STATS==True):
+                    tmp_bbox = self.etData[cN][i].gtbb #for STATS
+                
+                for k in range(self.NUM_TRACKERS): #loop for every person looking
+                    #print(cN,i,k)
                     #w_max = self.im_dims[i][1] #for removing irrelevant points
                     #h_max = self.im_dims[i][0]
                     LP = self.etData[cN][i].fixations[k].imgCoord.fixL.pos[:]
                     RP = self.etData[cN][i].fixations[k].imgCoord.fixR.pos[:]
+                    BP = np.vstack((LP,RP)) #LP|RP    
+                    
+                    if(CLEANUP == True and BP.shape[1]>0): #necessary to failcheck; some measurements are erroneus. vstack of two empty arrs gives BP.shape=(2,0)
+                        BP = np.delete(BP,np.where(np.isnan(BP[:,0])),axis=0)
+                        BP = np.delete(BP,np.where(np.isnan(BP[:,1])),axis=0)
+                        BP = np.delete(BP,np.where((BP[:,0]<0)),axis=0) #delete all fixations outside of quadrant
+                        BP = np.delete(BP,np.where((BP[:,1]<0)),axis=0) #delete all fixations outside of quadrant
+                        BP = np.delete(BP,np.where((BP[:,0]>im_dims[1])),axis=0) #remove out of images fixes on x-scale. Remember: dimensions are given as [y,x]
+                        BP = np.delete(BP,np.where((BP[:,1]>im_dims[0])),axis=0) #remove out of images fixes on y-scale
+                        
+                        
+                    self.eyeData[cN,i,k] = [BP] #fill with matrix as list #due to variable size    
+                    
+                    if(STATS==True and BP.shape[1]>0):
+                        fixes_counter += BP.shape[0]
+                        self.eyeData_stats[cN,i,k,0] = BP.shape[0]
+                        xs,ys,w,h = self.get_bounding_box(tmp_bbox)
+                        nbbx = [xs,ys,w,h]
+                        self.eyeData_stats[cN,i,k,1] = self.get_num_fix_in_bbox(nbbx,BP)
+                          
                     #remove invalid values . if larger than image-dims or outside of image (negative vals)
                     #LP = LP[~np.any((LP[:,]),:]
-                    BP = np.vstack((LP,RP)) #LP|RP 
                     #print(BP)
                     #eyeData[i,k,0] = [LP,RP] #fill with list values 
-                    self.eyeData[cN,i,k] = [BP] #fill with matrix as list #due to variable size
+                   
+                    
+    
+    #def get_ground_truth(self):
+    def get_bounding_box(self,inClass): #Args: inClass: bounding-box-field
+        #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
+        if(inClass.ndim>1): #If more than one bounding box
+            inClass = inClass[0]
+        xs = inClass[0] #upper left corner
+        ys = inClass[1] #upper left corner
+        w = inClass[2]-inClass[0]
+        h = inClass[-1]-inClass[1]
+        return xs,ys,w,h
+    
+    def get_num_fix_in_bbox(self,bbx: list, BP: np.array):
+        tmpBP = np.delete(BP,np.where((BP[:,0]<=bbx[0])),axis=0) #left constraint
+        tmpBP = np.delete(tmpBP,np.where((tmpBP[:,1]<=bbx[1])),axis=0) #up constraint
+        tmpBP = np.delete(tmpBP,np.where((tmpBP[:,0]>=bbx[0]+bbx[2])),axis=0) #right constraint #only keep between 200 and 400
+        tmpBP = np.delete(tmpBP,np.where((tmpBP[:,1]>=bbx[1]+bbx[3])),axis=0) #only keep between 100 and 200
         
+        count = tmpBP.shape[0]
+        
+        return count
     
     def load_images_for_class(self,num):
     #0: aeroplane
@@ -95,17 +167,17 @@ class pascalET():
         classdict = {0:"aeroplane",1:"bicycle",2:"boat",3:"cat",4:"cow",5:"diningtable",6:"dog",7:"horse",8:"motorbike",9:"sofa"}    
         self.chosen_class = classdict[num]
         print("Loading class instances for class: ",classdict[num])
-        self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
+        #self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
         self.filename = []
         self.im_dims = []
         self.bbox = []
-        for i,j in enumerate(self.etData[num]): #i is image, k is patient
+        for i,j in enumerate(range(self.num_files_in_class[num])): #i is image, k is patient
             self.filename.append(self.etData[num][i].filename + ".jpg")
             self.im_dims.append(self.etData[num][i].dimensions)
             #print(j)
             self.bbox.append(self.etData[num][i].gtbb)
             
-            for k in range(5):
+            """for k in range(5):
                 #w_max = self.im_dims[i][1] #for removing irrelevant points
                 #h_max = self.im_dims[i][0]
                 LP = self.etData[num][i].fixations[k].imgCoord.fixL.pos[:]
@@ -114,12 +186,12 @@ class pascalET():
                 #LP = LP[~np.any((LP[:,]),:]
                 BP = np.vstack((LP,RP)) #LP ; RP 
                 #eyeData[i,k,0] = [LP,RP] #fill with list values 
-                self.eyeData[i,k,0] = BP #fill with matrix
+                self.eyeData[i,k,0] = BP #fill with matrix"""
         
-        print("Loading complete. Loaded ",self.eyeData.shape[0], " images.")                
+        print("Loading complete. Loaded ",self.num_files_in_class[num], "images.")                
         #Remember that format for eye-tracking data is (num_instances,num_persons,1). In the one dimension, a matrix is saved, consisting of [LP,RP]-signals.
     
-    def random_sample_plot(self):
+    def random_sample_plot(self): #still needs updating with new format
         from matplotlib.patches import Rectangle
         #random.seed(18)
         num = random.randint(0,self.eyeData.shape[0])
@@ -179,25 +251,21 @@ class pascalET():
         for i in range(self.NUM_TRACKERS):
             color = next(ax._get_lines.prop_cycler)['color']
             mylabel = str(i+1)
-            num_fix = int(self.eyeData[idx,i][0][:,0].shape[0]/2)
+            num_fix = int(self.eyeData[classOC,idx,i][0].shape[0]/2) #get #no of rows
             print(num_fix) #number of fixations on img
             #Left eye
-            plt.scatter(self.eyeData[idx,i][0][:,0],self.eyeData[idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #wrong - you are not plotting pairwise here, you are plotting R as function of L 
+            """plt.scatter(self.eyeData[idx,i][0][:,0],self.eyeData[idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
             plt.plot(self.eyeData[idx,i][0][0:num_fix,0],self.eyeData[idx,i][0][0:num_fix,1],label=str(),color= color)
             plt.plot(self.eyeData[idx,i][0][num_fix:,0],self.eyeData[idx,i][0][num_fix:,1],label=str(),color = color)
+            """
+            plt.scatter(self.eyeData[classOC,idx,i][0][:,0],self.eyeData[classOC,idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
+            plt.plot(self.eyeData[classOC,idx,i][0][0:num_fix,0],self.eyeData[classOC,idx,i][0][0:num_fix,1],label=str(),color= color)
+            plt.plot(self.eyeData[classOC,idx,i][0][num_fix:,0],self.eyeData[classOC,idx,i][0][num_fix:,1],label=str(),color = color)
+            
         plt.legend()
         plt.imshow(im)
         
         
-    def get_bounding_box(self,inClass):
-        #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
-        if(inClass.ndim>1): #If more than one bounding box
-            inClass = inClass[0]
-        xs = inClass[0] #upper left corner
-        ys = inClass[1] #upper left corner
-        w = inClass[2]-inClass[0]
-        h = inClass[-1]-inClass[1]
-        return xs,ys,w,h
         
     def basic_hists(self):
         #goals: 
