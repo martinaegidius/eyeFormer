@@ -11,12 +11,20 @@ import os
 from load_POET import pascalET
 
 
-DEBUG = True
+DEBUG = False
 dset = pascalET()
-dset.loadmat_all()
+dset.loadmat()
+
+
+#debug new format 
+BP = dset.convert_eyetracking_data()
+
 if(DEBUG==True):
     dset.load_images_for_class(8)
     dset.random_sample_plot()
+
+
+
 
 #dset.basic_hists()
 #dset.basic_stats()

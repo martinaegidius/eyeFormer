@@ -33,6 +33,7 @@ class pascalET():
     classwise_num_pixels = None
     classwise_ratios = None
     bbox = None
+    num_files_in_class = []
     
     
     
@@ -44,6 +45,40 @@ class pascalET():
             A = scipy.io.loadmat(file,squeeze_me=True,struct_as_record=False)
             self.etData.append(A["etData"])
             #etData[0].fixations[0].imgCoord.fixR.pos
+        
+        #self.eyeData = 
+        
+    def convert_eyetracking_data(self,CLEANUP = False):
+        "Takes in mat-format and instead makes usable format."
+        
+        #self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
+        num = [x for x in range(10)] #classes
+        
+        #get array-dim: 
+        max_dim = 0
+        for cN in num: 
+            cDim = len(self.etData[cN])
+            if(cDim>max_dim):
+                max_dim=cDim
+            self.num_files_in_class.append(cDim) #append value to structure, important for later slicing. 
+        
+            
+
+        self.eyeData = np.empty((len(num),max_dim,self.NUM_TRACKERS),dtype=object) #size: [9,1051,5,1] for complete dset. Last index holds list of eyetracking for person
+
+        for cN in num: #class-number
+            for i in range(len(self.etData[cN])):
+                for k in range(self.NUM_TRACKERS):
+                    #w_max = self.im_dims[i][1] #for removing irrelevant points
+                    #h_max = self.im_dims[i][0]
+                    LP = self.etData[cN][i].fixations[k].imgCoord.fixL.pos[:]
+                    RP = self.etData[cN][i].fixations[k].imgCoord.fixR.pos[:]
+                    #remove invalid values . if larger than image-dims or outside of image (negative vals)
+                    #LP = LP[~np.any((LP[:,]),:]
+                    BP = np.vstack((LP,RP)) #LP|RP 
+                    #print(BP)
+                    #eyeData[i,k,0] = [LP,RP] #fill with list values 
+                    self.eyeData[cN,i,k] = [BP] #fill with matrix as list #due to variable size
         
     
     def load_images_for_class(self,num):
@@ -257,4 +292,4 @@ class pascalET():
         print("Classwise num_px vars: \n",num_px_var)
         
         
-        
+    

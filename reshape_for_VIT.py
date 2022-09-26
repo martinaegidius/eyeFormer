@@ -13,8 +13,63 @@ import os
 import pickle 
 from tqdm import tqdm 
 
+def resize_images_struct(data: pascalET,goal: int,classN: str, WRITE: bool):
+    """Takes whole pascalET-dataset-instance and resizes"""
+    scale_factors = [] #width,height list
+    for k in range(len(data.etData)):
+        for i,size in tqdm(enumerate(data.im_dims)):
+            #print("Iteration no: ",i)
+            h_factor = size[0]/goal #DATA IS IN HEIGHT,WIDTH
+            w_factor = size[1]/goal
+            scale_factors.append([w_factor,h_factor])
+            #print(data.filename[i])
+            #print("Resizing factors: ", w_factor,h_factor)
+            
+            im_path = data.p + "/Data/POETdataset/PascalImages/" +data.classes[k]+"_"+data.filename[i]+".jpg"
+            #img = cv2.imread(im_path)
+            #resized = cv2.resize(img,(goal,goal))
+            
+            
+            #resized = resized[:,:,::-1] #return in rgb instead of bgr
+            
+            #now we need eyetracking scaled aswell 
+            #may later be implemented as standalone function
+            for j in range(data.NUM_TRACKERS):
+                data.etData[k][i][:,0][j][:,0]  /= w_factor
+                data.eyeData[i][:,0][j][:,1] /= h_factor
+            
+            #and finally bounding-box-scaling - MAYBE IMPLEMENT FUNCTION
+            x,y,w,h = data.get_bounding_box(data.bbox[0])
+            w = (x+w)/w_factor
+            h = (y+h)/h_factor
+            x /= w_factor
+            y /= h_factor
+            
+            if data.bbox[i].ndim>1:
+                data.bbox[i][0][0] = int(x)
+                data.bbox[i][0][1] = int(y)
+                data.bbox[i][0][2] = int(w)
+                data.bbox[i][0][3] = int(h)
+                #alternatively data.bbox[i][0] = np.array([x,y,w,h])
+            else: 
+                data.bbox[i][0] = int(x)
+                data.bbox[i][1] = int(y)
+                data.bbox[i][2] = int(w)
+                data.bbox[i][3] = int(h)
+                
+            tmp_filename = res_path+data.chosen_class+"_"+data.filename[i]
+            #print("Trying to write to: ",tmp_filename)
+            if WRITE==True:
+                cv2.imwrite(tmp_filename,resized)
+            
+            #link path to /resized/filename.jpg instead in Data-datastructure - may actually be overly complicated for no reason
+            #fixed with resized=True flag in plot-function etc
+            #data.filename[i] = "Resized/"+data.filename[i]
+            #print("relinking filepath to: ",data.filename[i])
+            
+        return resized
 
-def resize_images(data: pascalET,goal: int):
+def resize_images_for_class(data: pascalET,goal: int,classN: str):
     scale_factors = [] #width,height list
     for i,size in tqdm(enumerate(data.im_dims)):
         #print("Iteration no: ",i)
@@ -23,7 +78,7 @@ def resize_images(data: pascalET,goal: int):
         scale_factors.append([w_factor,h_factor])
         #print(data.filename[i])
         #print("Resizing factors: ", w_factor,h_factor)
-        im_path = data.p + "/Data/POETdataset/PascalImages/" +"motorbike"+"_"+data.filename[i]
+        im_path = data.p + "/Data/POETdataset/PascalImages/" +classN+"_"+data.filename[i]
         img = cv2.imread(im_path)
         resized = cv2.resize(img,(goal,goal))
         
@@ -83,7 +138,7 @@ if DEBUG==True:
     dset.specific_plot(8,"2009_004207.jpg") #plot original for debugging
 
 
-img = resize_images(dset,goal=224)
+img = resize_images_for_class(dset,goal=224,classN="motorbike")
 
 
 file_resized = open(res_path+"resized_pascalET.obj","wb")
