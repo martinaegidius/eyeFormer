@@ -36,6 +36,7 @@ class pascalET():
     num_files_in_class = []
     eyeData_stats = None
     bboxes = None #new solution
+    debug_box_BP = []
     
     
     
@@ -124,15 +125,21 @@ class pascalET():
                     if(k==0):
                         fixArr = BP
                     else:
-                        fixArr = np.hstack(fixArr,BP)
+                        if(BP.shape[1] == fixArr.shape[1]): #necessary check as None array can not be concat
+                            fixArr = np.vstack((fixArr,BP)) 
+                        else: 
+                            pass
                     
                     #probably this part in self-made loop 
                     if(STATS==True and NOFIXES == False):
                         fixes_counter += BP.shape[0] #atm unused
                         self.eyeData_stats[cN,i,k,0] = BP.shape[0] #number of fixes in total saved in col 0. Number of fixes in total is length of BP-array
-                        xs,ys,w,h = self.get_bounding_box(tmp_bbox,BP) 
+                        xs,ys,w,h = self.get_bounding_box(tmp_bbox) #,fixArr) look comment line 135
                         nbbx = [xs,ys,w,h]
-                        self.eyeData_stats[cN,i,k,1] = self.get_num_fix_in_bbox(nbbx,BP) 
+                        self.eyeData_stats[cN,i,k,1] = self.get_num_fix_in_bbox(nbbx,BP)  #NEED, but removed for debugging
+                        if(i==17): #for debugging image 17 with multiple bboxes
+                            print("appending to debugging-field of struct")
+                            self.debug_box_BP.append(BP)
                     elif(STATS==True and NOFIXES == True):
                         self.eyeData_stats[cN,i,k,0] = 0
                         self.eyeData_stats[cN,i,k,1] = 0
@@ -144,12 +151,17 @@ class pascalET():
     def get_bounding_box(self,inClass,fixArr=None): #Args: inClass: bounding-box-field. Type: array. fixArr called when called from bbox-stats module in order to maximize fixes in bbox of choice.
         #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
         print("Input-array: ",inClass)
-        if isinstance(inClass,np.ndarray):
+        if (isinstance(inClass,np.ndarray) and isinstance(fixArr,np.ndarray)):
             if fixArr.all(): #check if is initialized, ie. called from method which wants to maximise bbox-hits.
                 if(inClass.ndim>1): #If more than one bounding box
                     boxidx = self.maximize_fixes(inClass,fixArr)
                     inClass = inClass[boxidx]
                     print("Went into funky-loop. Outputarr: ",inClass)
+        
+        #old: only used now for debugging, must be removed
+        if(inClass.ndim>1):
+            inClass = inClass[0]
+            print("Multiple boxes detected. Used first box: ",inClass)
         
         xs = inClass[0] #upper left corner
         ys = inClass[1] #upper left corner
