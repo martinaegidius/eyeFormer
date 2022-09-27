@@ -89,8 +89,6 @@ class pascalET():
 
         for cN in num: #class-number
             for i in range(len(self.etData[cN])):
-                fixes_counter = 0  #reset image-wise
-                fixes_in_bbox_counter = 0
                 im_dims = self.etData[cN][i].dimensions[:2]
                 #print("Im dims: ",im_dims[0],im_dims[1])
                 self.im_dims[cN,i,:] = im_dims[:]
@@ -100,43 +98,59 @@ class pascalET():
                     tmp_bbox = self.etData[cN][i].gtbb #for STATS
                 
                 for k in range(self.NUM_TRACKERS): #loop for every person looking
+                    NOFIXES = False 
+                    fixes_counter = 0  #reset image-wise #atm unused
+                    fixes_in_bbox_counter = 0 #atm unused
                     #print(cN,i,k)
                     #w_max = self.im_dims[i][1] #for removing irrelevant points
                     #h_max = self.im_dims[i][0]
                     LP = self.etData[cN][i].fixations[k].imgCoord.fixL.pos[:]
                     RP = self.etData[cN][i].fixations[k].imgCoord.fixR.pos[:]
-                    BP = np.vstack((LP,RP)) #LP|RP    
+                    BP = np.vstack((LP,RP)) #LP|RP
+                    if(BP.shape[0] == 0 or BP.shape[1]==0):
+                        NOFIXES = True
                     
-                    if(CLEANUP == True and BP.shape[1]>0): #necessary to failcheck; some measurements are erroneus. vstack of two empty arrs gives BP.shape=(2,0)
+                    if(CLEANUP == True and NOFIXES == False): #necessary to failcheck; some measurements are erroneus. vstack of two empty arrs gives BP.shape=(2,0)
                         BP = np.delete(BP,np.where(np.isnan(BP[:,0])),axis=0)
                         BP = np.delete(BP,np.where(np.isnan(BP[:,1])),axis=0)
-                        BP = np.delete(BP,np.where((BP[:,0]<0)),axis=0) #delete all fixations outside of quadrant
-                        BP = np.delete(BP,np.where((BP[:,1]<0)),axis=0) #delete all fixations outside of quadrant
+                        BP = np.delete(BP,np.where((BP[:,0]<0)),axis=0) #delete all fixations outside of image-quadrant
+                        BP = np.delete(BP,np.where((BP[:,1]<0)),axis=0) #delete all fixations outside of image-quadrant
                         BP = np.delete(BP,np.where((BP[:,0]>im_dims[1])),axis=0) #remove out of images fixes on x-scale. Remember: dimensions are given as [y,x]
                         BP = np.delete(BP,np.where((BP[:,1]>im_dims[0])),axis=0) #remove out of images fixes on y-scale
                         
                         
                     self.eyeData[cN,i,k] = [BP] #fill with matrix as list #due to variable size    
                     
-                    if(STATS==True and BP.shape[1]>0):
-                        fixes_counter += BP.shape[0]
-                        self.eyeData_stats[cN,i,k,0] = BP.shape[0]
-                        xs,ys,w,h = self.get_bounding_box(tmp_bbox)
-                        nbbx = [xs,ys,w,h]
-                        self.eyeData_stats[cN,i,k,1] = self.get_num_fix_in_bbox(nbbx,BP)
-                          
-                    #remove invalid values . if larger than image-dims or outside of image (negative vals)
-                    #LP = LP[~np.any((LP[:,]),:]
-                    #print(BP)
-                    #eyeData[i,k,0] = [LP,RP] #fill with list values 
-                   
+                    if(k==0):
+                        fixArr = BP
+                    else:
+                        fixArr = np.hstack(fixArr,BP)
                     
+                    #probably this part in self-made loop 
+                    if(STATS==True and NOFIXES == False):
+                        fixes_counter += BP.shape[0] #atm unused
+                        self.eyeData_stats[cN,i,k,0] = BP.shape[0] #number of fixes in total saved in col 0. Number of fixes in total is length of BP-array
+                        xs,ys,w,h = self.get_bounding_box(tmp_bbox,BP) 
+                        nbbx = [xs,ys,w,h]
+                        self.eyeData_stats[cN,i,k,1] = self.get_num_fix_in_bbox(nbbx,BP) 
+                    elif(STATS==True and NOFIXES == True):
+                        self.eyeData_stats[cN,i,k,0] = 0
+                        self.eyeData_stats[cN,i,k,1] = 0
+                          
+                    #LOG: you are trying to get best-bbox from one participant at a time, as you want to get the max-score when considering ALL-participants. You need to ctrl-z a lot now . Alternatively get bbox which maximizes number one participant
+                    #No matter what, it seems you generate best bbox wrong point in time. Maybe you should run a stats in another loop 
     
     #def get_ground_truth(self):
-    def get_bounding_box(self,inClass): #Args: inClass: bounding-box-field
+    def get_bounding_box(self,inClass,fixArr=None): #Args: inClass: bounding-box-field. Type: array. fixArr called when called from bbox-stats module in order to maximize fixes in bbox of choice.
         #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
-        if(inClass.ndim>1): #If more than one bounding box
-            inClass = inClass[0]
+        print("Input-array: ",inClass)
+        if isinstance(inClass,np.ndarray):
+            if fixArr.all(): #check if is initialized, ie. called from method which wants to maximise bbox-hits.
+                if(inClass.ndim>1): #If more than one bounding box
+                    boxidx = self.maximize_fixes(inClass,fixArr)
+                    inClass = inClass[boxidx]
+                    print("Went into funky-loop. Outputarr: ",inClass)
+        
         xs = inClass[0] #upper left corner
         ys = inClass[1] #upper left corner
         w = inClass[2]-inClass[0]
@@ -152,6 +166,18 @@ class pascalET():
         count = tmpBP.shape[0]
         
         return count
+    
+    def maximize_fixes(self,bbox_arr,BP):
+        best = 0 #initialize as zero-fixes best
+        idx = 0 
+        for i in range(bbox_arr.shape[0]-1): #go through array rowwise. Send array-row as list get_bounding_box. Check number of fixes on this bbox.
+            tmp = self.get_num_fix_in_bbox(self.get_bounding_box(bbox_arr[i].tolist(),fixArr=BP),BP=BP) #convert every bounding box to a list, and get number of points in box
+            if(tmp>best):
+                best = tmp
+                idx = i
+        print("Best box: no: ",idx," has number of fixes: ",best)
+        return idx
+        
     
     def load_images_for_class(self,num):
     #0: aeroplane
