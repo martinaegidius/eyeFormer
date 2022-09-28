@@ -13,6 +13,7 @@ import random
 import matplotlib.pyplot as plt
 from matplotlib import image
 import cv2
+import copy
 
 DEBUG = True
 
@@ -37,6 +38,7 @@ class pascalET():
     eyeData_stats = None
     bboxes = None #new solution
     debug_box_BP = []
+    chosen_bbox = None
     
     
     
@@ -59,11 +61,12 @@ class pascalET():
                 
             Returns: 
                 Nothing. 
-                Mutates object instance by filling self.eyeData-matrix. 
-                Additionally saves fixation-statistics if stats = True.
-                
-                
-                
+                Mutates object instance by filling :
+                    self.eyeData-matrix
+                if STATS == True additionally mutates:     
+                    self.eyeData_stats (counts number of fixations in image and in bbox)
+                    self.etData.gtbb overwritten with BEST box
+                    
         """
         
         #self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
@@ -81,22 +84,22 @@ class pascalET():
         self.eyeData = np.empty((len(num),max_dim,self.NUM_TRACKERS),dtype=object) #format: [num_classes,max(num_images),num_trackers]. size: [9,1051,5,1] for complete dset. Last index holds list of eyetracking for person
         self.im_dims = np.empty((len(num),max_dim,2))
         self.bboxes = np.empty((len(num),max_dim),dtype=object) #has to be able to save lists of arrays, as some images have multiple bboxes. 
-
+        self.chosen_box = np.empty((len(num),max_dim),dtype=object)
 
         if(STATS==True): #for eyetracking-statistics
             num_stats = 2 #number of fixes in bbox, number of fixes on image 
-            self.eyeData_stats = np.empty((len(num),max_dim,self.NUM_TRACKERS,num_stats)) #format: [classNo, imageNo, personNo, 2:(number of fixes, number of fixes in bbox)]
-        
+            #old self.eyeData_stats = np.empty((len(num),max_dim,self.NUM_TRACKERS,num_stats)) #format: [classNo, imageNo, personNo, 2:(number of fixes, number of fixes in bbox)]
+            self.eyeData_stats = np.empty((len(num),max_dim,num_stats)) #format: [classNo, imageNo, 2:(number of fixes in img, number of fixes in bbox)]
 
         for cN in num: #class-number
+            self.debug_box_BP = [] #reset at every new class
             for i in range(len(self.etData[cN])):
                 im_dims = self.etData[cN][i].dimensions[:2]
                 #print("Im dims: ",im_dims[0],im_dims[1])
                 self.im_dims[cN,i,:] = im_dims[:]
                 self.bboxes[cN,i] = [self.etData[cN][i].gtbb]
                 
-                if(STATS==True):
-                    tmp_bbox = self.etData[cN][i].gtbb #for STATS
+                
                 
                 for k in range(self.NUM_TRACKERS): #loop for every person looking
                     NOFIXES = False 
@@ -109,7 +112,7 @@ class pascalET():
                     RP = self.etData[cN][i].fixations[k].imgCoord.fixR.pos[:]
                     BP = np.vstack((LP,RP)) #LP|RP
                     if(BP.shape[0] == 0 or BP.shape[1]==0):
-                        NOFIXES = True
+                        NOFIXES = True #necessary flag as array else is (0,2) ie not None even though is empty
                     
                     if(CLEANUP == True and NOFIXES == False): #necessary to failcheck; some measurements are erroneus. vstack of two empty arrs gives BP.shape=(2,0)
                         BP = np.delete(BP,np.where(np.isnan(BP[:,0])),axis=0)
@@ -122,46 +125,56 @@ class pascalET():
                         
                     self.eyeData[cN,i,k] = [BP] #fill with matrix as list #due to variable size    
                     
-                    if(k==0):
-                        fixArr = BP
+                    if(k==0): #create fixArr
+                        if(BP.shape==(2,0)):
+                            fixArr = copy.deepcopy(np.transpose(BP)) #invalid measurements are for some reason stored as shape (0,2) (transpose of other measurements)
+                        else:
+                            fixArr = copy.deepcopy(BP)
                     else:
                         if(BP.shape[1] == fixArr.shape[1]): #necessary check as None array can not be concat
                             fixArr = np.vstack((fixArr,BP)) 
                         else: 
                             pass
                     
-                    #probably this part in self-made loop 
-                    if(STATS==True and NOFIXES == False):
-                        fixes_counter += BP.shape[0] #atm unused
-                        self.eyeData_stats[cN,i,k,0] = BP.shape[0] #number of fixes in total saved in col 0. Number of fixes in total is length of BP-array
-                        xs,ys,w,h = self.get_bounding_box(tmp_bbox) #,fixArr) look comment line 135
+                    del BP 
+                self.debug_box_BP.append(fixArr)
+                #probably this part needs to go into function for itself, and it needs to go out of inner-loop!
+                if(STATS==True):
+                    tmp_bbox = self.etData[cN][i].gtbb #for STATS
+                    if(NOFIXES == False): #NOFIXES True if zero fixes in image across all participants
+                        #fixes_counter += fixArr[i].shape[0] #atm unused
+                        self.eyeData_stats[cN,i,0] = int(fixArr.shape[0]) #number of fixes in total saved in col 0. Number of fixes in total is length of fixArr-array
+                        xs,ys,w,h = self.get_bounding_box(tmp_bbox,fixArr) #look comment line 135
+                        self.chosen_box[cN][i] = [xs,ys,w,h]
+                        self.etData[cN][i].gtbb = np.array([xs,ys,xs+w,ys+h]) #use broadcast - NOTE OVERWRITES BBOX TO SINGLE
                         nbbx = [xs,ys,w,h]
-                        self.eyeData_stats[cN,i,k,1] = self.get_num_fix_in_bbox(nbbx,BP)  #NEED, but removed for debugging
-                        if(i==17): #for debugging image 17 with multiple bboxes
-                            print("appending to debugging-field of struct")
-                            self.debug_box_BP.append(BP)
-                    elif(STATS==True and NOFIXES == True):
-                        self.eyeData_stats[cN,i,k,0] = 0
-                        self.eyeData_stats[cN,i,k,1] = 0
-                          
-                    #LOG: you are trying to get best-bbox from one participant at a time, as you want to get the max-score when considering ALL-participants. You need to ctrl-z a lot now . Alternatively get bbox which maximizes number one participant
-                    #No matter what, it seems you generate best bbox wrong point in time. Maybe you should run a stats in another loop 
+                        self.eyeData_stats[cN,i,1] = self.get_num_fix_in_bbox(nbbx,fixArr)  #NEED, but removed for debugging
+                    else:
+                        self.eyeData_stats[cN,i,0] = 0
+                        self.eyeData_stats[cN,i,1] = 0
+                del fixArr #after each image, reset fixArr
+                
+                    
     
     #def get_ground_truth(self):
-    def get_bounding_box(self,inClass,fixArr=None): #Args: inClass: bounding-box-field. Type: array. fixArr called when called from bbox-stats module in order to maximize fixes in bbox of choice.
+    def get_bounding_box(self,inClass,fixArr=None,DEBUG=None): #Args: inClass: bounding-box-field. Type: array. fixArr called when called from bbox-stats module in order to maximize fixes in bbox of choice.
         #convert to format for patches.Rectangle; it wants anchor point (upper left), width, height
-        print("Input-array: ",inClass)
+        #print("Input-array: ",inClass)
+        if(DEBUG):
+            print("Failing in: ", DEBUG)
         if (isinstance(inClass,np.ndarray) and isinstance(fixArr,np.ndarray)):
-            if fixArr.all(): #check if is initialized, ie. called from method which wants to maximise bbox-hits.
+            if fixArr.any(): #check if is initialized, ie. called from method which wants to maximise bbox-hits.
                 if(inClass.ndim>1): #If more than one bounding box
                     boxidx = self.maximize_fixes(inClass,fixArr)
                     inClass = inClass[boxidx]
-                    print("Went into funky-loop. Outputarr: ",inClass)
+                    #print("Actively chose best box to be: ",boxidx)
+                    #print("Went into funky-loop. Outputarr: ",inClass)
         
+        #    inClass = inClass[0]
         #old: only used now for debugging, must be removed
-        if(inClass.ndim>1):
-            inClass = inClass[0]
-            print("Multiple boxes detected. Used first box: ",inClass)
+        #if(isinstance(inClass,np.ndarray) and inClass.ndim>1):
+            #inClass = inClass[0]
+            #print("Multiple boxes detected. Used first box: ",inClass)
         
         xs = inClass[0] #upper left corner
         ys = inClass[1] #upper left corner
@@ -177,17 +190,19 @@ class pascalET():
         
         count = tmpBP.shape[0]
         
-        return count
+        return int(count)
     
     def maximize_fixes(self,bbox_arr,BP):
         best = 0 #initialize as zero-fixes best
         idx = 0 
-        for i in range(bbox_arr.shape[0]-1): #go through array rowwise. Send array-row as list get_bounding_box. Check number of fixes on this bbox.
+        for i in range(bbox_arr.shape[0]): #go through array rowwise. Send array-row as list get_bounding_box. Check number of fixes on this bbox.
+            #print("Testing box i = ",i)
             tmp = self.get_num_fix_in_bbox(self.get_bounding_box(bbox_arr[i].tolist(),fixArr=BP),BP=BP) #convert every bounding box to a list, and get number of points in box
+            #print("Result of hits in box ",i," = ",tmp)
             if(tmp>best):
                 best = tmp
                 idx = i
-        print("Best box: no: ",idx," has number of fixes: ",best)
+        #print("Best box: no: ",idx," has number of fixes: ",best)
         return idx
         
     
@@ -232,12 +247,15 @@ class pascalET():
     def random_sample_plot(self): #still needs updating with new format
         from matplotlib.patches import Rectangle
         #random.seed(18)
-        num = random.randint(0,self.eyeData.shape[0])
+        classOC = self.classes.index(self.chosen_class)
+        num = random.randint(0,len(self.etData[classOC]))
         path = self.p + "/Data/POETdataset/PascalImages/" +self.chosen_class+"_"+self.filename[num]
         im = image.imread(path)
         plt.title("{}:{}".format(self.chosen_class,self.filename[num]))
         #now for eye-tracking-data
-        
+        print("Plotting a random sample from loaded images. Chosen index of given class: ",num)
+        print("Detected fixes in total: ",self.eyeData_stats[classOC][num][0])
+        print("Detected fixes in box: ",self.eyeData_stats[classOC][num][1])
         ax = plt.gca()
         global x 
         global y
@@ -250,12 +268,13 @@ class pascalET():
         for i in range(self.NUM_TRACKERS):
             color = next(ax._get_lines.prop_cycler)['color']
             mylabel = str(i+1)
-            num_fix = int(self.eyeData[num,i][0][:,0].shape[0]/2)
-            print(num_fix) #number of fixations on img
+            #num_fix = int(self.eyeData[num,i][0][:,0].shape[0]/2)
+            num_fix = int(self.eyeData[classOC,num,i][0].shape[0]/2)
+            print(num_fix) #number of fixations on img. Deprecated - you have calculated total.
             #Left eye
-            plt.scatter(self.eyeData[num,i][0][:,0],self.eyeData[num,i][0][:,1],alpha=0.8,label=mylabel,color = color) #wrong - you are not plotting pairwise here, you are plotting R as function of L 
-            plt.plot(self.eyeData[num,i][0][0:num_fix,0],self.eyeData[num,i][0][0:num_fix,1],label=str(),color= color)
-            plt.plot(self.eyeData[num,i][0][num_fix:,0],self.eyeData[num,i][0][num_fix:,1],label=str(),color = color)
+            plt.scatter(self.eyeData[classOC,num,i][0][:,0],self.eyeData[classOC,num,i][0][:,1],alpha=0.8,label=mylabel,color = color) #wrong - you are not plotting pairwise here, you are plotting R as function of L 
+            plt.plot(self.eyeData[classOC,num,i][0][0:num_fix,0],self.eyeData[classOC,num,i][0][0:num_fix,1],label=str(),color= color)
+            plt.plot(self.eyeData[classOC,num,i][0][num_fix:,0],self.eyeData[classOC,num,i][0][num_fix:,1],label=str(),color = color)
         plt.legend()
         plt.imshow(im)
         
