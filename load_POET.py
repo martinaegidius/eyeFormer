@@ -52,8 +52,8 @@ class pascalET():
             #etData[0].fixations[0].imgCoord.fixR.pos
         
         #self.eyeData = 
-        
-    def convert_eyetracking_data(self,CLEANUP: bool,STATS: bool):
+    
+    def convert_eyetracking_data(self,CLEANUP: bool,STATS: bool,num=[x for x in range(10)]):
         """Takes in mat-format and instead makes usable format.
             Args: 
                 CLEANUP: Bool. If true, remove all invalid fixations (outside of image)
@@ -70,7 +70,7 @@ class pascalET():
         """
         
         #self.eyeData = np.empty((self.etData[num].shape[0],self.NUM_TRACKERS,1),dtype=object)
-        num = [x for x in range(10)] #classes
+        #num = [x for x in range(10)] #classes
         
         #get maximal number of images in class for creating arrays which can hold all data: 
         max_dim = 0
@@ -154,7 +154,7 @@ class pascalET():
                         self.eyeData_stats[cN,i,1] = 0
                 del fixArr #after each image, reset fixArr
                 
-                    
+        
     
     #def get_ground_truth(self):
     def get_bounding_box(self,inClass,fixArr=None,DEBUG=None): #Args: inClass: bounding-box-field. Type: array. fixArr called when called from bbox-stats module in order to maximize fixes in bbox of choice.
