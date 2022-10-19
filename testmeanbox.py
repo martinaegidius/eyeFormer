@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Sep 28 15:13:32 2022
-
-@author: max
-"""
-
 from load_POET import pascalET
 import os 
 from torch.utils.data import Dataset, DataLoader
@@ -15,6 +7,7 @@ import torch.nn as nn
 import numpy as np
 from torchvision import transforms, ops
 import math
+
 
 
 class AirplanesBoatsDataset(Dataset):
@@ -295,8 +288,7 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
     
 torch.manual_seed(1)
 CHECK_BALANCE = False
-GENERATE_DATASET = False
-NUM_IN_OVERFIT = 5
+GENERATE_DATASET = True
 
 if(GENERATE_DATASET == True):
     dataFrame = pascalET()
@@ -386,360 +378,28 @@ if(GENERATE_DATASET == True):
     train = torch.utils.data.Subset(airplanesBoats,trainIDX)
     test = torch.utils.data.Subset(airplanesBoats,testIDX)
     root_dir = os.path.dirname(__file__) + "/Data/POETdataset/"
-    torch.save(train,root_dir+"airplanesBoatsTrain.pt")
-    torch.save(test,root_dir+"airplanesBoatsTest.pt")
-    print("................. Wrote datasets to disk ....................")
+    #torch.save(train,root_dir+"airplanesBoatsTrain.pt")
+    #torch.save(test,root_dir+"airplanesBoatsTest.pt")
+    #print("................. Wrote datasets to disk ....................")
 
-if(GENERATE_DATASET == False):
-    print("................. Loaded datasets from disk .................")
-    train = torch.load(root_dir+"airplanesBoatsTrain.pt")
-    test = torch.load(root_dir+"airplanesBoatsTest.pt")
-
-
-#make dataloaders of chosen split
-BATCH_SZ = 1
-
+BATCH_SZ = 1 
 trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
-#for model overfitting
-overfitSet = torch.utils.data.Subset(train,torch.randint(0,len(train),(NUM_IN_OVERFIT,1)))
-oTrainLoader = DataLoader(overfitSet,batch_size=1,shuffle=True,num_workers=0)
 
-#check class-balance (only necessary for finding appropriate seed ONCE): 
-CHECK = False
-if CHECK:
-    CHECK_BALANCE()   
 
-def CHECK_BALANCE():
-    if(CHECK_BALANCE==True):
-        countDict = {"trainplane":0,"trainsofa":0,"testplane":0,"testsofa":0}
-        for i_batch, sample_batched in enumerate(trainloader):
-            for j in range(sample_batched["class"].shape[0]):
-                if sample_batched["class"][j]==0:
-                    countDict["trainplane"] += 1 
-                if sample_batched["class"][j]==9:
-                    countDict["trainsofa"] += 1
-                
-        for i_batch, sample_batched in enumerate(testloader):
-            for j in range(sample_batched["class"].shape[0]):
-                if sample_batched["class"][j]==0:
-                    countDict["testplane"] += 1 
-                if sample_batched["class"][j]==9:
-                    countDict["testsofa"] += 1
-    else:
-        return
-        
+boxes = torch.zeros(80,4)
+for i, data in enumerate(trainloader): 
+    boxes[i,:] = data["target"]
     
-    print("Train-set: (airplanes, sofas) (",countDict["trainplane"]/train_size,"),(",countDict["trainsofa"]/train_size,")")
-    print("Test-set: (airplanes, sofas) (",countDict["testplane"]/test_size,"),(",countDict["testsofa"]/test_size,")")
-    print("Seems quite balanced :-)")
+print("Average box on complete training set",torch.mean(boxes,0))
 
-
-"""
-Model definitions: 
-and build
-
-"""    
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def generate_square_subsequent_mask(sz: int) -> torch.Tensor: 
-    return torch.triu(torch.ones(sz,sz)*float('-inf'),diagonal=1)
-
-#define transformer model. Goal: overfitting
-class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.1):
-            self.d_model = input_dim
-            super(eyeFormer_baseline,self).__init__() #get class instance
-            self.pos_encoder = PositionalEncoding(input_dim,dropout)
-            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=2,dim_feedforward=hidden_dim,dropout=dropout,activation="relu",batch_first=True) #False due to positional encoding made on batch in middle
-            #make encoder - 3 pieces
-            self.cls_token = nn.Parameter(torch.zeros(1,1))
-            self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 8)
-            #self.decoder = nn.Linear(64,4,bias=True) 
-            self.clsdecoder = nn.Linear(2,4,bias=True)
-        
-            
-        def forward(self,x,src_padding_mask):
-            """#src_key_padding_mask: 
-            if torch.cuda.is_available==True: #if batchsize 1 we need to unsqueeze
-                src_padding_mask = (x[:,:,0]==0).cuda()#.reshape(x.shape[1],x.shape[0]) #- src_key_padding_mask: :math:`(S)` for unbatched input otherwise :math:`(N, S)`.
-            else:
-                src_padding_mask = (x[:,:,0]==0)#.reshape(x.shape[1],x.shape[0])
-            
-            print("src_mask: \n",src_padding_mask)
-            
-            """
-            if x.dim()==1: #fix for batch-size 1 
-                x = x.unsqueeze(0)
-                
-            bs = x.shape[0]
-            #print("key-mask\n",src_padding_mask)
-            clsmask = torch.zeros(bs,1).to(dtype=torch.bool)
-            mask = torch.cat((clsmask,src_padding_mask[:,:].reshape(bs,32)),1) #unmask cls-token
-            #print("reshaped mask\n",src_padding_mask)
-            
-            
-            #src-mask needs be [batch-size,32]. It is solely calculated based on if x is -999, as both x,y will -999 pairwise.
-            #src_padding_mask = src_padding_mask.swapaxes(0,1)
-            """
-            If a BoolTensor is provided, positions with True is not allowed to attend while False values will be unchanged. If a FloatTensor is provided, it will be added to the attention weight.
-            https://stackoverflow.com/questions/62170439/difference-between-src-mask-and-src-key-padding-mask
-            """
-            
-            #src_padding_mask = src_padding_mask.transpose(0,1) #
-            
-            x = x* math.sqrt(self.d_model) #as this in torch tutorial but dont know why
-            x = torch.cat((self.cls_token.expand(x.shape[0],-1,2),x),1)
-            x = self.pos_encoder(x)
-            
-            #print("Src_padding mask is: ",src_padding_mask)
-            #print("pos encoding shape: ",x.shape)
-            output = self.transformer_encoder(x,src_key_padding_mask=mask)
-            #print("encoder output:\n",output)
-            #print("Encoder output shape:\n",output.shape)
-            #print("Same as input :-)")
-           
-            output = self.clsdecoder(output[:,0,:])
-            
-            return output
-        
-class PositionalEncoding(nn.Module):
-    def __init__(self,d_model,dropout = 0.0,max_len = 5000):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0,d_model,2)*(-math.log(10000.0)/d_model))
-        pe = torch.zeros(max_len,1,d_model)
-        
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        """
-        Args:
-            x: Tensor, shape [batch_size, seq_len, embedding_dim]
-            
-        Returns: 
-            PosEnc(x): Tensor, shape [batchsize,seq_len,embedding_dim]
-        """
-        x = x.swapaxes(1,0) #[seq_len,bs,embedding_dim]
-        x = x + self.pe[:x.size(0)] #[seq_len x bs x embedding dim]
-        x = x.swapaxes(1,0) #[bs x seq_len x embedding_dim]
-        return self.dropout(x)
-
-            
-   
-
-
-
-#lossF = torch.nn.CrossEntropyLoss() #Kristian undrer sig over hvordan man kan bruge den
-#lossF = ops.complete_box_iou_loss()
-
-
-
-
-def RMSELoss(output,target):
-    """
-    Get mean square error averaged on batch
-    Calculates ((sqrt(x_true)- sqrt(x_pred))ˆ2 + (sqrt(y_true)- sqrt(y_pred))ˆ2) for all points and makes sequential sum
-    Parameters
-    ----------
-    output : TYPE
-        DESCRIPTION.
-    target : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    loss = 0 
-    if target.shape[0]==4: 
-        target = target.unsqueeze(0)
-    for i in range(target.shape[0]):
-        loss += torch.pow(torch.sqrt(output[i])-torch.sqrt(target[i]),2)
-    
-    return torch.mean(loss) #average per batch loss
-
-def MSELoss(output,target):
-    """
-    Get mean square error averaged on batch
-    Calculates ((sqrt(x_true)- sqrt(x_pred))ˆ2 + (sqrt(y_true)- sqrt(y_pred))ˆ2) for all points and makes sequential sum
-    Parameters
-    ----------
-    output : TYPE
-        DESCRIPTION.
-    target : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    Loss
-    #Todo: consider adding additional penalties for out-of-image guesses (ie x<0 and x>1)
-
-    """
-    loss = 0 
-    if target.shape[0]==4: 
-        target = target.unsqueeze(0)
-    for i in range(target.shape[0]):
-        loss += torch.pow(output[i]-target[i],2)
-    
-    return torch.mean(loss) #average per batch loss
-
-
- 
-
-
-###-----------------------------------MODEL TRAINING----------------------------------
-model = eyeFormer_baseline()
-activation = {}
-def getActivation(name):
-    def hook(model,input,output):
-        activation[name] = output.detach()
-    return hook
-#register forward hooks
-h1 = model.transformer_encoder.register_forward_hook(getActivation('encoder'))
-h2 = model.clsdecoder.register_forward_hook(getActivation('linear'))
-optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-loss_fn = nn.SmoothL1Loss(beta=0.025) #default: mean and beta=1.0
-encoder_list,linear_list = [], []
-
-def train_one_epoch(model,loss,overfit=False) -> float: 
-    running_loss = 0.
-    #src_mask = generate_square_subsequent_mask(32).to(device)
-    correct_count = 0
-    false_count = 0
-    batchwiseLoss = []
-    
-    if(overfit==True):
-        trainloader = oTrainLoader
-    
-    for i, data in enumerate(trainloader):
-        optimizer.zero_grad() #reset grads
-        target = data["target"]
-        mask = data["mask"]
-        #print("Mask:\n",data["mask"])
-        #print("Input: \n",data["signal"])
-        #print("Goal is: \n",data["target"])
-        outputs = model(data["signal"],mask)
-        
-        #register activations 
-        encoder_list.append(activation["encoder"])
-        linear_list.append(activation["linear"])
-        
-        #print("Prediction: \n",outputs)
-        loss = loss_fn(outputs,target)
-        #loss = MSELoss(outputs,target)
-        #loss = ops.complete_box_iou_loss(outputs,data["target"].type(torch.LongTensor),reduction='mean') #reduction for calculating loss over whole batch and not just single-image
-        #print("Loss is: ",loss)
-        loss.backward()
-        
-        IOU = ops.box_iou(outputs,data["target"])
-        correct_count += torch.sum(IOU>0.5) #PASCAL CRITERIUM
-        false_count += data["signal"].shape[0]-correct_count #signal.shape[0] = batch_size 
-        
-        optimizer.step()
-        running_loss += loss.item() #is complete EPOCHLOSS
-        """
-        if i%4==3: #report loss for every 4 batches (ie every 16 images)
-            last_loss = running_loss/4
-            print(' batch {} loss: {}'.format(i+1,last_loss))
-            running_loss = 0.
-          """
-        
-        #print("Training on file: ", data["file"])
-    if i>=1:    
-        epochLoss = running_loss/i #get average of loss across batch
-    else: 
-        epochLoss = running_loss #if single-batch simply return loss 
-    return epochLoss,correct_count,false_count,target,data["signal"],mask
-
-epoch_number = 0
-EPOCHS = 100
-epochLoss = 0 
-model.train(True)
-epochLossLI = []
-torch.autograd.set_detect_anomaly(True)
-
-for epoch in range(EPOCHS):
-    model.train(True)
-    print("EPOCH {}:".format(epoch_number+1))    
-    epochLoss, correct_count, false_count,target,signal,mask = train_one_epoch(model,loss_fn,overfit=True)
-    print("epoch loss {}".format(epochLoss))
-    epochLossLI.append(epochLoss)
-        
-    
-    epoch_number += 1 
-    
-h1.remove()
-h2.remove()   
-
-
-trainsettestLosses = []
-
-model.train(False)
-print("Evaluating on first {} instances".format(len(overfitSet)))
-meanBox = torch.zeros(len(overfitSet),4)
-with torch.no_grad():
-    for i, data in enumerate(oTrainLoader):
-        signal = data["signal"]
-        target = data["target"]
-        mask = data["mask"]
-        output = model(signal,mask)
-        batchloss = loss_fn(target,output)
-        print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
-        trainsettestLosses.append(batchloss)
-        
-        meanBox[i,:] = data["target"]
-        
-print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
-
-
-#TEST-LOOP
-testlosses = []
-with torch.no_grad():
-    running_loss = 0 
-    for i, data in enumerate(testloader):
-        signal = data["signal"]
-        target = data["target"]
-        mask = data["mask"]
-        output = model(signal,mask)
-        batchloss = loss_fn(target,output)
-        running_loss += batchloss.item()
-        testlosses.append(batchloss.item())
-        if i!=0 and i%100==0:
-            print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
-            running_loss = 0 
-        
-        
-    
-    
-
-
-    
-import matplotlib.pyplot as plt
-epochPlot = [x+1 for x in range(len(epochLossLI))]
-plt.plot(epochPlot,epochLossLI)   
-plt.ylabel("L1-LOSS") 
-plt.xlabel("Epoch")
-plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-plt.show()
-
-plt.figure(2)
-plt.plot(testlosses)
-plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
-plt.show()
-            
-        
-
-
-"""
-for i_batch, sample_batched in enumerate(trainloader):
-    print(i_batch,sample_batched)
-    batch = sample_batched
-    if i_batch==1:
+#first five samples 
+boxes = torch.zeros(5,4)
+for i, data in enumerate(testloader): 
+    if i==5: 
         break
-"""
+    print(data["file"])
+    boxes[i,:] = data["target"]
+
+print("Average box first five sampels torch.manual.seed(1): ",torch.mean(boxes,0))
 
