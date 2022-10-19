@@ -296,7 +296,7 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 torch.manual_seed(1)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-NUM_IN_OVERFIT = 5
+NUM_IN_OVERFIT = 3
 
 if(GENERATE_DATASET == True):
     dataFrame = pascalET()
@@ -403,7 +403,7 @@ trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 #for model overfitting
 overfitSet = torch.utils.data.Subset(train,torch.randint(0,len(train),(NUM_IN_OVERFIT,1)))
-oTrainLoader = DataLoader(overfitSet,batch_size=1,shuffle=True,num_workers=0)
+oTrainLoader = DataLoader(overfitSet,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 
 #check class-balance (only necessary for finding appropriate seed ONCE): 
 CHECK = False
@@ -451,13 +451,21 @@ class eyeFormer_baseline(nn.Module):
             self.d_model = input_dim
             super(eyeFormer_baseline,self).__init__() #get class instance
             self.pos_encoder = PositionalEncoding(input_dim,dropout)
-            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=2,dim_feedforward=hidden_dim,dropout=dropout,activation="relu",batch_first=True) #False due to positional encoding made on batch in middle
+            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=1,dim_feedforward=hidden_dim,dropout=dropout,activation="relu",batch_first=True) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
-            self.cls_token = nn.Parameter(torch.zeros(1,1))
-            self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 8)
+            self.cls_token = nn.Parameter(torch.zeros(1,2),requires_grad=True)
+            self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
             #self.decoder = nn.Linear(64,4,bias=True) 
             self.clsdecoder = nn.Linear(2,4,bias=True)
+            self.DEBUG = False
         
+        def switch_debug(self):
+            self.DEBUG = not self.DEBUG
+            if(self.DEBUG==True):
+                string = "on"
+            else: string = "off"
+            print("Debugging mode turned "+string)
+            
             
         def forward(self,x,src_padding_mask):
             """#src_key_padding_mask: 
@@ -469,6 +477,8 @@ class eyeFormer_baseline(nn.Module):
             print("src_mask: \n",src_padding_mask)
             
             """
+            
+                
             if x.dim()==1: #fix for batch-size 1 
                 x = x.unsqueeze(0)
                 
@@ -476,7 +486,8 @@ class eyeFormer_baseline(nn.Module):
             #print("key-mask\n",src_padding_mask)
             clsmask = torch.zeros(bs,1).to(dtype=torch.bool)
             mask = torch.cat((clsmask,src_padding_mask[:,:].reshape(bs,32)),1) #unmask cls-token
-            #print("reshaped mask\n",src_padding_mask)
+            if self.DEBUG==True:
+                print("1: reshaped mask\n",mask)
             
             
             #src-mask needs be [batch-size,32]. It is solely calculated based on if x is -999, as both x,y will -999 pairwise.
@@ -490,21 +501,29 @@ class eyeFormer_baseline(nn.Module):
             
             x = x* math.sqrt(self.d_model) #as this in torch tutorial but dont know why
             x = torch.cat((self.cls_token.expand(x.shape[0],-1,2),x),1)
+            if self.DEBUG==True:
+                print("2: scaled and cat with CLS:\n",x,x.shape)
             x = self.pos_encoder(x)
+            if self.DEBUG==True:
+                print("3: positionally encoded: \n",x,x.shape)
             
             #print("Src_padding mask is: ",src_padding_mask)
             #print("pos encoding shape: ",x.shape)
             output = self.transformer_encoder(x,src_key_padding_mask=mask)
+            if self.DEBUG==True:
+                print("4: Transformer encoder output:\n",output)
             #print("encoder output:\n",output)
             #print("Encoder output shape:\n",output.shape)
             #print("Same as input :-)")
            
             output = self.clsdecoder(output[:,0,:])
+            if self.DEBUG==True:
+                print("5: linear layer based on CLS-token output: \n",output)
             
             return output
         
 class PositionalEncoding(nn.Module):
-    def __init__(self,d_model,dropout = 0.0,max_len = 5000):
+    def __init__(self,d_model,dropout = 0.1,max_len = 5000):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         position = torch.arange(max_len).unsqueeze(1)
@@ -589,8 +608,23 @@ def MSELoss(output,target):
     return torch.mean(loss) #average per batch loss
 
 
- 
+def pascalACC(preds,labels):
+    no_corr = 0 
+    no_false = 0
+    IOU_li = []
+    if preds.dim()==1:
+        preds = preds.unsqueeze(0)
+    if labels.dim()==1:
+        labels = labels.unsqueeze(0)
+    for i in range(preds.shape[0]): #get pascal-criterium accuraccy
+        IOU = ops.box_iou(preds,labels) #outputs: Nx4, data["target"]: Mx4
+        IOU_li.append(IOU)
+        if(IOU>0.5):
+            no_corr += 1
+        else:
+            no_false += 1
 
+    return no_corr,no_false,IOU_li
 
 ###-----------------------------------MODEL TRAINING----------------------------------
 model = eyeFormer_baseline()
@@ -602,7 +636,10 @@ def getActivation(name):
 #register forward hooks
 h1 = model.transformer_encoder.register_forward_hook(getActivation('encoder'))
 h2 = model.clsdecoder.register_forward_hook(getActivation('linear'))
-optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+
+model.switch_debug()
+
+optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=0.025) #default: mean and beta=1.0
 encoder_list,linear_list = [], []
 
@@ -635,10 +672,18 @@ def train_one_epoch(model,loss,overfit=False) -> float:
         #loss = ops.complete_box_iou_loss(outputs,data["target"].type(torch.LongTensor),reduction='mean') #reduction for calculating loss over whole batch and not just single-image
         #print("Loss is: ",loss)
         loss.backward()
+        	
+        nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
+
         
-        IOU = ops.box_iou(outputs,data["target"])
-        correct_count += torch.sum(IOU>0.5) #PASCAL CRITERIUM
-        false_count += data["signal"].shape[0]-correct_count #signal.shape[0] = batch_size 
+        #print(data["target"].shape)
+        
+        for i in range(data["target"].shape[0]): #get pascal-criterium 
+            IOU = ops.box_iou(outputs[i].unsqueeze(0),data["target"][i].unsqueeze(0)) #outputs: Nx4, data["target"]: Mx4
+            if(IOU>0.5):
+                correct_count += 1
+            else:
+                false_count += 1
         
         optimizer.step()
         running_loss += loss.item() #is complete EPOCHLOSS
@@ -682,6 +727,9 @@ trainsettestLosses = []
 model.train(False)
 print("Evaluating on first {} instances".format(len(overfitSet)))
 meanBox = torch.zeros(len(overfitSet),4)
+
+no_overfit_correct = 0
+no_overfit_false = 0
 with torch.no_grad():
     for i, data in enumerate(oTrainLoader):
         signal = data["signal"]
@@ -689,57 +737,70 @@ with torch.no_grad():
         mask = data["mask"]
         output = model(signal,mask)
         batchloss = loss_fn(target,output)
+        accScores = pascalACC(output,target)
+        no_overfit_correct += accScores[0]
+        no_overfit_false += accScores[1]
+        IOU = accScores[2]
         print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
         trainsettestLosses.append(batchloss)
-        
+        print("IOU: ",IOU)
         meanBox[i,:] = data["target"]
         
 print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
+print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
+
+print("Overfitting finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
 
 
-#TEST-LOOP
-testlosses = []
-with torch.no_grad():
-    running_loss = 0 
-    for i, data in enumerate(testloader):
-        signal = data["signal"]
-        target = data["target"]
-        mask = data["mask"]
-        output = model(signal,mask)
-        batchloss = loss_fn(target,output)
-        running_loss += batchloss.item()
-        testlosses.append(batchloss.item())
-        if i!=0 and i%100==0:
-            print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
-            running_loss = 0 
+
+#---------------------TEST AND EVAL -------------#
+# no_test_correct = 0 
+# no_test_false = 0
+# testlosses = []
+# with torch.no_grad():
+#     running_loss = 0 
+#     for i, data in enumerate(testloader):
+#         signal = data["signal"]
+#         target = data["target"]
+#         mask = data["mask"]
+#         output = model(signal,mask)
+#         batchloss = loss_fn(target,output)
+#         running_loss += batchloss.item()
+#         testlosses.append(batchloss.item())
+#         accScores = pascalACC(output,target)
+#         no_test_correct += accScores[0]
+#         no_test_false += accScores[1]
+#         if i!=0 and i%100==0:
+#             print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
+#             running_loss = 0 
         
         
-    
+# print("Testing finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
     
 
 
     
-import matplotlib.pyplot as plt
-epochPlot = [x+1 for x in range(len(epochLossLI))]
-plt.plot(epochPlot,epochLossLI)   
-plt.ylabel("L1-LOSS") 
-plt.xlabel("Epoch")
-plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-plt.show()
+# import matplotlib.pyplot as plt
+# epochPlot = [x+1 for x in range(len(epochLossLI))]
+# plt.plot(epochPlot,epochLossLI)   
+# plt.ylabel("L1-LOSS") 
+# plt.xlabel("Epoch")
+# plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
+# plt.savefig(root_dir+"5-image.jpg")
 
-plt.figure(2)
-plt.plot(testlosses)
-plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
-plt.show()
+# plt.figure(2)
+# plt.plot(testlosses)
+# plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
+# plt.show()
             
         
 
 
-"""
-for i_batch, sample_batched in enumerate(trainloader):
-    print(i_batch,sample_batched)
-    batch = sample_batched
-    if i_batch==1:
-        break
-"""
+# """
+# for i_batch, sample_batched in enumerate(trainloader):
+#     print(i_batch,sample_batched)
+#     batch = sample_batched
+#     if i_batch==1:
+#         break
+# """
 
