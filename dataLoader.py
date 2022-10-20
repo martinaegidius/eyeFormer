@@ -293,10 +293,10 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
         return outTensor
     
     
-torch.manual_seed(1)
+torch.manual_seed(2)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-NUM_IN_OVERFIT = 3
+NUM_IN_OVERFIT = 1
 
 if(GENERATE_DATASET == True):
     dataFrame = pascalET()
@@ -447,16 +447,16 @@ def generate_square_subsequent_mask(sz: int) -> torch.Tensor:
 
 #define transformer model. Goal: overfitting
 class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.1):
+        def __init__(self,input_dim=2,hidden_dim=128,output_dim=4,dropout=0.0):
             self.d_model = input_dim
             super(eyeFormer_baseline,self).__init__() #get class instance
             self.pos_encoder = PositionalEncoding(input_dim,dropout)
-            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=1,dim_feedforward=hidden_dim,dropout=dropout,activation="relu",batch_first=True) #False due to positional encoding made on batch in middle
+            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=2,dim_feedforward=hidden_dim,dropout=dropout,activation="gelu",batch_first=True) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,2),requires_grad=True)
             self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
             #self.decoder = nn.Linear(64,4,bias=True) 
-            self.clsdecoder = nn.Linear(2,4,bias=True)
+            self.clsdecoder = nn.Linear(2,output_dim,bias=True)
             self.DEBUG = False
         
         def switch_debug(self):
@@ -467,24 +467,17 @@ class eyeFormer_baseline(nn.Module):
             print("Debugging mode turned "+string)
             
             
-        def forward(self,x,src_padding_mask):
-            """#src_key_padding_mask: 
-            if torch.cuda.is_available==True: #if batchsize 1 we need to unsqueeze
-                src_padding_mask = (x[:,:,0]==0).cuda()#.reshape(x.shape[1],x.shape[0]) #- src_key_padding_mask: :math:`(S)` for unbatched input otherwise :math:`(N, S)`.
-            else:
-                src_padding_mask = (x[:,:,0]==0)#.reshape(x.shape[1],x.shape[0])
+        def forward(self,x,src_padding_mask=None):
             
-            print("src_mask: \n",src_padding_mask)
             
-            """
-            
-                
             if x.dim()==1: #fix for batch-size 1 
                 x = x.unsqueeze(0)
                 
             bs = x.shape[0]
             #print("key-mask\n",src_padding_mask)
             clsmask = torch.zeros(bs,1).to(dtype=torch.bool)
+            if src_padding_mask==None: 
+                src_padding_mask = torch.zeros(bs,32).to(dtype=torch.bool)
             mask = torch.cat((clsmask,src_padding_mask[:,:].reshape(bs,32)),1) #unmask cls-token
             if self.DEBUG==True:
                 print("1: reshaped mask\n",mask)
@@ -523,7 +516,7 @@ class eyeFormer_baseline(nn.Module):
             return output
         
 class PositionalEncoding(nn.Module):
-    def __init__(self,d_model,dropout = 0.1,max_len = 5000):
+    def __init__(self,d_model,dropout = 0.0,max_len = 5000):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         position = torch.arange(max_len).unsqueeze(1)
@@ -556,6 +549,9 @@ class PositionalEncoding(nn.Module):
 #lossF = ops.complete_box_iou_loss()
 
 
+def getNumberParams(model):
+    print(sum(p.numel() for p in model.parameters()))
+    return 
 
 
 def RMSELoss(output,target):
@@ -636,14 +632,36 @@ def getActivation(name):
 #register forward hooks
 h1 = model.transformer_encoder.register_forward_hook(getActivation('encoder'))
 h2 = model.clsdecoder.register_forward_hook(getActivation('linear'))
+h3 = model.transformer_encoder.layers[0].linear1.register_forward_hook(getActivation('before_relu'))
+h4 = model.transformer_encoder.layers[0].linear2.register_forward_hook(getActivation('after_relu'))
 
-model.switch_debug()
+def checkDeadRelu(t,show=False):
+    """
+    Parameters
+    ----------
+    t : pyTorch tensor
+        shape: [bs,CLS(1)+seq_len,hidden_dim]
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-loss_fn = nn.SmoothL1Loss(beta=0.025) #default: mean and beta=1.0
-encoder_list,linear_list = [], []
+    Returns
+    -------
+    tensor : [number of negative elements, total number of elements (all batches)]
+    """
+    flat = t.reshape(-1)
+    num_no_active = (flat<=0).sum(0)
+    if(show==True):
+        print("Number of not activated neurons: {}/{}".format(num_no_active,t.numel()))
+    return torch.tensor([num_no_active,t.numel()])
 
-def train_one_epoch(model,loss,overfit=False) -> float: 
+
+#model.switch_debug()
+
+optimizer = torch.optim.Adam(model.parameters(),lr=0.008) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
+encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
+dead_neurons_lin1 = []
+dead_neurons_lin2 = []
+
+def train_one_epoch(model,loss,overfit=False,negative_print=False) -> float: 
     running_loss = 0.
     #src_mask = generate_square_subsequent_mask(32).to(device)
     correct_count = 0
@@ -665,6 +683,12 @@ def train_one_epoch(model,loss,overfit=False) -> float:
         #register activations 
         encoder_list.append(activation["encoder"])
         linear_list.append(activation["linear"])
+        lin1_list.append(activation["before_relu"])
+        lin2_list.append(activation["after_relu"])
+        dead_neurons_lin1.append(checkDeadRelu(activation["before_relu"]))
+        dead_neurons_lin2.append(checkDeadRelu(activation["after_relu"]))
+        if(negative_print==True):
+            print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #print("Prediction: \n",outputs)
         loss = loss_fn(outputs,target)
@@ -701,6 +725,8 @@ def train_one_epoch(model,loss,overfit=False) -> float:
         epochLoss = running_loss #if single-batch simply return loss 
     return epochLoss,correct_count,false_count,target,data["signal"],mask
 
+
+
 epoch_number = 0
 EPOCHS = 100
 epochLoss = 0 
@@ -711,7 +737,7 @@ torch.autograd.set_detect_anomaly(True)
 for epoch in range(EPOCHS):
     model.train(True)
     print("EPOCH {}:".format(epoch_number+1))    
-    epochLoss, correct_count, false_count,target,signal,mask = train_one_epoch(model,loss_fn,overfit=True)
+    epochLoss, correct_count, false_count,target,signal,mask = train_one_epoch(model,loss_fn,overfit=True,negative_print=True)
     print("epoch loss {}".format(epochLoss))
     epochLossLI.append(epochLoss)
         
@@ -720,6 +746,8 @@ for epoch in range(EPOCHS):
     
 h1.remove()
 h2.remove()   
+h3.remove()
+h4.remove()
 
 
 trainsettestLosses = []
@@ -745,6 +773,7 @@ with torch.no_grad():
         trainsettestLosses.append(batchloss)
         print("IOU: ",IOU)
         meanBox[i,:] = data["target"]
+        
         
 print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
 print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
@@ -780,18 +809,18 @@ print("Overfitting finished. Accuracy with PASCAL-criterium: {}/{}, percentage: 
 
 
     
-# import matplotlib.pyplot as plt
-# epochPlot = [x+1 for x in range(len(epochLossLI))]
-# plt.plot(epochPlot,epochLossLI)   
-# plt.ylabel("L1-LOSS") 
-# plt.xlabel("Epoch")
-# plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-# plt.savefig(root_dir+"5-image.jpg")
+import matplotlib.pyplot as plt
+epochPlot = [x+1 for x in range(len(epochLossLI))]
+plt.plot(epochPlot,epochLossLI)   
+plt.ylabel("L1-LOSS") 
+plt.xlabel("Epoch")
+plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
+plt.savefig(root_dir+"5-image.jpg")
 
-# plt.figure(2)
-# plt.plot(testlosses)
-# plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
-# plt.show()
+#plt.figure(2)
+#plt.plot(testlosses)
+#plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
+#plt.show()
             
         
 
