@@ -293,10 +293,12 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
         return outTensor
     
     
-torch.manual_seed(2)
+torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
+OVERFIT = False
 NUM_IN_OVERFIT = 1
+classString = "airplanes"
 
 if(GENERATE_DATASET == True):
     dataFrame = pascalET()
@@ -307,7 +309,7 @@ if(GENERATE_DATASET == True):
     #airplanesBoats = AirplanesBoatsDataset(dataFrame, EYES, FILES, TARGETS,CLASSLABELS, root_dir, [0,9]) #init dataset as torch.Dataset.
     """
     
-    classesOC = [0,9]
+    classesOC = [0]
     composed = transforms.Compose([transforms.Lambda(tensorPad()),
                                    transforms.Lambda(rescale_coords())]) #transforms.Lambda(tensor_pad() also a possibility, but is probably unecc.
     
@@ -386,14 +388,19 @@ if(GENERATE_DATASET == True):
     train = torch.utils.data.Subset(airplanesBoats,trainIDX)
     test = torch.utils.data.Subset(airplanesBoats,testIDX)
     root_dir = os.path.dirname(__file__) + "/Data/POETdataset/"
-    torch.save(train,root_dir+"airplanesBoatsTrain.pt")
-    torch.save(test,root_dir+"airplanesBoatsTest.pt")
-    print("................. Wrote datasets to disk ....................")
+    torch.save(train,root_dir+classString+"Train.pt")
+    torch.save(test,root_dir+classString+"Test.pt")
+    print("................. Wrote datasets for ",classString,"to disk ....................")
+
+def load_split(className):
+    print("................. Loaded ",className," datasets from disk .................")
+    train = torch.load(root_dir+className+"Train.pt")
+    test = torch.load(root_dir+className+"Test.pt")
+    return train,test
 
 if(GENERATE_DATASET == False):
-    print("................. Loaded datasets from disk .................")
-    train = torch.load(root_dir+"airplanesBoatsTrain.pt")
-    test = torch.load(root_dir+"airplanesBoatsTest.pt")
+    train,test = load_split(classString)
+    
 
 
 #make dataloaders of chosen split
@@ -447,11 +454,11 @@ def generate_square_subsequent_mask(sz: int) -> torch.Tensor:
 
 #define transformer model. Goal: overfitting
 class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=128,output_dim=4,dropout=0.0):
+        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.0):
             self.d_model = input_dim
             super(eyeFormer_baseline,self).__init__() #get class instance
             self.pos_encoder = PositionalEncoding(input_dim,dropout)
-            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=2,dim_feedforward=hidden_dim,dropout=dropout,activation="gelu",batch_first=True) #False due to positional encoding made on batch in middle
+            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=1,dim_feedforward=hidden_dim,dropout=dropout,activation="relu",batch_first=True) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,2),requires_grad=True)
             self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
@@ -509,7 +516,7 @@ class eyeFormer_baseline(nn.Module):
             #print("Encoder output shape:\n",output.shape)
             #print("Same as input :-)")
            
-            output = self.clsdecoder(output[:,0,:])
+            output = self.clsdecoder(output[:,0,:]) #double-check that batch-first is true
             if self.DEBUG==True:
                 print("5: linear layer based on CLS-token output: \n",output)
             
@@ -634,6 +641,7 @@ h1 = model.transformer_encoder.register_forward_hook(getActivation('encoder'))
 h2 = model.clsdecoder.register_forward_hook(getActivation('linear'))
 h3 = model.transformer_encoder.layers[0].linear1.register_forward_hook(getActivation('before_relu'))
 h4 = model.transformer_encoder.layers[0].linear2.register_forward_hook(getActivation('after_relu'))
+h5 = model.transformer_encoder.layers[0].norm2.register_forward_hook(getActivation('after norm2'))
 
 def checkDeadRelu(t,show=False):
     """
@@ -655,23 +663,27 @@ def checkDeadRelu(t,show=False):
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.008) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
 dead_neurons_lin2 = []
 
-def train_one_epoch(model,loss,overfit=False,negative_print=False) -> float: 
+def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_print=False) -> float: 
     running_loss = 0.
     #src_mask = generate_square_subsequent_mask(32).to(device)
     correct_count = 0
     false_count = 0
     batchwiseLoss = []
+    counter = 0
     
     if(overfit==True):
         trainloader = oTrainLoader
+    else: 
+        trainloader = trainloader #a bit clumsy, may be refactored
     
     for i, data in enumerate(trainloader):
+        counter += 1
         optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
@@ -690,18 +702,7 @@ def train_one_epoch(model,loss,overfit=False,negative_print=False) -> float:
         if(negative_print==True):
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
-        #print("Prediction: \n",outputs)
-        loss = loss_fn(outputs,target)
-        #loss = MSELoss(outputs,target)
-        #loss = ops.complete_box_iou_loss(outputs,data["target"].type(torch.LongTensor),reduction='mean') #reduction for calculating loss over whole batch and not just single-image
-        #print("Loss is: ",loss)
-        loss.backward()
-        	
-        nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
-
-        
-        #print(data["target"].shape)
-        
+        #PASCAL CRITERIUM
         for i in range(data["target"].shape[0]): #get pascal-criterium 
             IOU = ops.box_iou(outputs[i].unsqueeze(0),data["target"][i].unsqueeze(0)) #outputs: Nx4, data["target"]: Mx4
             if(IOU>0.5):
@@ -709,8 +710,16 @@ def train_one_epoch(model,loss,overfit=False,negative_print=False) -> float:
             else:
                 false_count += 1
         
-        optimizer.step()
+        loss = loss_fn(outputs,target)
+        loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
+        nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
+        optimizer.step()
+        	
+
+        
+        
+        
         """
         if i%4==3: #report loss for every 4 batches (ie every 16 images)
             last_loss = running_loss/4
@@ -718,31 +727,45 @@ def train_one_epoch(model,loss,overfit=False,negative_print=False) -> float:
             running_loss = 0.
           """
         
-        #print("Training on file: ", data["file"])
-    if i>=1:    
-        epochLoss = running_loss/i #get average of loss across batch
-    else: 
-        epochLoss = running_loss #if single-batch simply return loss 
-    return epochLoss,correct_count,false_count,target,data["signal"],mask
+        
+    epochLoss = running_loss/counter 
+    epochAcc = correct_count/len(trainloader.dataset)
+    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc
 
 
 
 epoch_number = 0
-EPOCHS = 100
+EPOCHS = 2
 epochLoss = 0 
 model.train(True)
 epochLossLI = []
+epochAccLI = []
 torch.autograd.set_detect_anomaly(True)
 
 for epoch in range(EPOCHS):
     model.train(True)
     print("EPOCH {}:".format(epoch_number+1))    
-    epochLoss, correct_count, false_count,target,signal,mask = train_one_epoch(model,loss_fn,overfit=True,negative_print=True)
+    epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
     print("epoch loss {}".format(epochLoss))
     epochLossLI.append(epochLoss)
+    epochAccLI.append(epochAcc)
+    epoch_number += 1 
+
+def save_epochs(loss,acc,classString,root_dir,mode):
+    path = root_dir + classString
+    if not os.path.exists(path):
+        os.mkdir(path)
+        
+    torch.save(loss,path+"/"+classString+"_"+mode+"_losses.pth")
+    torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
+    return
+save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
+
+    
         
     
-    epoch_number += 1 
+    
+    
     
 h1.remove()
 h2.remove()   
@@ -753,32 +776,33 @@ h4.remove()
 trainsettestLosses = []
 
 model.train(False)
-print("Evaluating on first {} instances".format(len(overfitSet)))
-meanBox = torch.zeros(len(overfitSet),4)
-
-no_overfit_correct = 0
-no_overfit_false = 0
-with torch.no_grad():
-    for i, data in enumerate(oTrainLoader):
-        signal = data["signal"]
-        target = data["target"]
-        mask = data["mask"]
-        output = model(signal,mask)
-        batchloss = loss_fn(target,output)
-        accScores = pascalACC(output,target)
-        no_overfit_correct += accScores[0]
-        no_overfit_false += accScores[1]
-        IOU = accScores[2]
-        print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
-        trainsettestLosses.append(batchloss)
-        print("IOU: ",IOU)
-        meanBox[i,:] = data["target"]
-        
-        
-print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
-print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
-
-print("Overfitting finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
+if(OVERFIT):
+    print("Evaluating on first {} instances".format(len(overfitSet)))
+    meanBox = torch.zeros(len(overfitSet),4)
+    
+    no_overfit_correct = 0
+    no_overfit_false = 0
+    with torch.no_grad():
+        for i, data in enumerate(oTrainLoader):
+            signal = data["signal"]
+            target = data["target"]
+            mask = data["mask"]
+            output = model(signal,mask)
+            batchloss = loss_fn(target,output)
+            accScores = pascalACC(output,target)
+            no_overfit_correct += accScores[0]
+            no_overfit_false += accScores[1]
+            IOU = accScores[2]
+            print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
+            trainsettestLosses.append(batchloss)
+            print("IOU: ",IOU)
+            meanBox[i,:] = data["target"]
+            
+            
+    print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
+    print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
+    
+    print("Overfitting finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
 
 
 
@@ -814,8 +838,13 @@ epochPlot = [x+1 for x in range(len(epochLossLI))]
 plt.plot(epochPlot,epochLossLI)   
 plt.ylabel("L1-LOSS") 
 plt.xlabel("Epoch")
-plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-plt.savefig(root_dir+"5-image.jpg")
+if(OVERFIT):
+    plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
+    plt.savefig(root_dir+"5-image.jpg")
+
+else: 
+    plt.title("Train-error on {}[{}] images".format(classString,len(train)))
+    plt.savefig(root_dir+"{}.jpg".format(classString))
 
 #plt.figure(2)
 #plt.plot(testlosses)
