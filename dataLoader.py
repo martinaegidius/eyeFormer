@@ -663,7 +663,7 @@ def checkDeadRelu(t,show=False):
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
@@ -735,7 +735,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
 
 
 epoch_number = 0
-EPOCHS = 2
+EPOCHS = 100
 epochLoss = 0 
 model.train(True)
 epochLossLI = []
@@ -744,12 +744,16 @@ torch.autograd.set_detect_anomaly(True)
 
 for epoch in range(EPOCHS):
     model.train(True)
-    print("EPOCH {}:".format(epoch_number+1))    
-    epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
-    print("epoch loss {}".format(epochLoss))
-    epochLossLI.append(epochLoss)
-    epochAccLI.append(epochAcc)
-    epoch_number += 1 
+    try:
+        print("EPOCH {}:".format(epoch_number+1))    
+        epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
+        print("epoch loss {}".format(epochLoss))
+        epochLossLI.append(epochLoss)
+        epochAccLI.append(epochAcc)
+        epoch_number += 1 
+    except KeyboardInterrupt:
+        print("Manual early stopping triggered")
+        break
 
 def save_epochs(loss,acc,classString,root_dir,mode):
     path = root_dir + classString
@@ -759,6 +763,7 @@ def save_epochs(loss,acc,classString,root_dir,mode):
     torch.save(loss,path+"/"+classString+"_"+mode+"_losses.pth")
     torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
     return
+
 save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
 
     
@@ -831,21 +836,39 @@ if(OVERFIT):
 # print("Testing finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
     
 
+def save_fig(root_dir,classString,pltobj,title=None,mode=None):
+    path = root_dir + classString + "/graphs/"
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print("Created graph-dir: ",path)
+    if title==None:
+        import time
+        clock = time.localtime()
+        timeString = str(clock[0])+"_"+str(clock[2])+"_"+str(clock[1]) + "_time_"+str(clock[3])+"-"+str(clock[4])+"-"+str(clock[5])
+        title = classString+"_"+mode+"_"+timeString+".png"
+        del timeString
+    pltobj.savefig(path+title)
+    return None
 
     
 import matplotlib.pyplot as plt
 epochPlot = [x+1 for x in range(len(epochLossLI))]
 plt.plot(epochPlot,epochLossLI)   
+plt.xticks(range(1,len(epochLossLI)+1))
 plt.ylabel("L1-LOSS") 
 plt.xlabel("Epoch")
 if(OVERFIT):
     plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-    plt.savefig(root_dir+"5-image.jpg")
+    save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
+    #plt.savefig(root_dir+"{}-image.jpg")
+    
 
 else: 
     plt.title("Train-error on {}[{}] images".format(classString,len(train)))
-    plt.savefig(root_dir+"{}.jpg".format(classString))
+    save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
+    #plt.savefig(root_dir+"{}.jpg".format(classString))
 
+    
 #plt.figure(2)
 #plt.plot(testlosses)
 #plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
