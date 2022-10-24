@@ -292,13 +292,15 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
         outTensor[:numEntries,:] = torch.from_numpy(inArr[-numEntries:,:]) #get all
         return outTensor
     
-    
+#-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = False
 NUM_IN_OVERFIT = 1
 classString = "airplanes"
+SAVEFIGS = False
+#-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
     dataFrame = pascalET()
@@ -477,30 +479,30 @@ class eyeFormer_baseline(nn.Module):
         def forward(self,x,src_padding_mask=None):
             
             
-            if x.dim()==1: #fix for batch-size 1 
+            if x.dim()==1: #fix for invalid entries. They are zeroed anyway, so full mask will apply (ie no forward pass)
                 x = x.unsqueeze(0)
+                if self.DEBUG==True:
+                    print("unsqueezed x in forward\n")
+                    self.DEBUG = False #just for catching first appliance for debugging 
                 
             bs = x.shape[0]
             #print("key-mask\n",src_padding_mask)
-            clsmask = torch.zeros(bs,1).to(dtype=torch.bool)
+            clsmask = torch.zeros(bs,1).to(dtype=torch.bool) #row-vector for each batch
             if src_padding_mask==None: 
-                src_padding_mask = torch.zeros(bs,32).to(dtype=torch.bool)
+                src_padding_mask = torch.zeros(bs,32).to(dtype=torch.bool) #look at all points. Used for forwarding input without mask ie debugging
             mask = torch.cat((clsmask,src_padding_mask[:,:].reshape(bs,32)),1) #unmask cls-token
             if self.DEBUG==True:
                 print("1: reshaped mask\n",mask)
             
             
-            #src-mask needs be [batch-size,32]. It is solely calculated based on if x is -999, as both x,y will -999 pairwise.
-            #src_padding_mask = src_padding_mask.swapaxes(0,1)
+            #src-mask needs be [batch-size,seqlen].
             """
             If a BoolTensor is provided, positions with True is not allowed to attend while False values will be unchanged. If a FloatTensor is provided, it will be added to the attention weight.
             https://stackoverflow.com/questions/62170439/difference-between-src-mask-and-src-key-padding-mask
             """
-            
-            #src_padding_mask = src_padding_mask.transpose(0,1) #
-            
+             
             x = x* math.sqrt(self.d_model) #as this in torch tutorial but dont know why
-            x = torch.cat((self.cls_token.expand(x.shape[0],-1,2),x),1)
+            x = torch.cat((self.cls_token.expand(x.shape[0],1,2),x),1) #concat along sequence-dimension. Copy bs times
             if self.DEBUG==True:
                 print("2: scaled and cat with CLS:\n",x,x.shape)
             x = self.pos_encoder(x)
@@ -523,6 +525,7 @@ class eyeFormer_baseline(nn.Module):
             return output
         
 class PositionalEncoding(nn.Module):
+    ###Probably change max_len of pos-encoding
     def __init__(self,d_model,dropout = 0.0,max_len = 5000):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
@@ -661,7 +664,7 @@ def checkDeadRelu(t,show=False):
     return torch.tensor([num_no_active,t.numel()])
 
 
-#model.switch_debug()
+model.switch_debug()
 
 optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
@@ -735,7 +738,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
 
 
 epoch_number = 0
-EPOCHS = 100
+EPOCHS = 2
 epochLoss = 0 
 model.train(True)
 epochLossLI = []
@@ -851,6 +854,8 @@ def save_fig(root_dir,classString,pltobj,title=None,mode=None):
     return None
 
     
+
+
 import matplotlib.pyplot as plt
 epochPlot = [x+1 for x in range(len(epochLossLI))]
 plt.plot(epochPlot,epochLossLI)   
@@ -859,13 +864,15 @@ plt.ylabel("L1-LOSS")
 plt.xlabel("Epoch")
 if(OVERFIT):
     plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-    save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
+    if SAVEFIGS:
+        save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
     #plt.savefig(root_dir+"{}-image.jpg")
     
 
 else: 
     plt.title("Train-error on {}[{}] images".format(classString,len(train)))
-    save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
+    if SAVEFIGS:
+        save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
     #plt.savefig(root_dir+"{}.jpg".format(classString))
 
     
