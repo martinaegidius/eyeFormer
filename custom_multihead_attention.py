@@ -294,7 +294,7 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 torch.manual_seed(3)
 CHECK_BALANCE = False
-GENERATE_DATASET = True
+GENERATE_DATASET = False
 OVERFIT = True
 NUM_IN_OVERFIT = 4
 classString = "airplanes"
@@ -590,7 +590,7 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:,:x.size(1),:] #[bs x seq_len x embedding dim]
         return self.dropout(x)
 
-def pascalACC(preds,labels): #TODO: does not work for batched input 
+def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
     no_corr = 0 
     no_false = 0
     IOU_li = []
@@ -640,6 +640,20 @@ def checkDeadRelu(t,show=False):
         print("Number of not activated neurons: {}/{}".format(num_no_active,t.numel()))
     return torch.tensor([num_no_active,t.numel()])
 
+def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
+    """Evaluates IOU of predictions and target, returns no of correct and falses, and a list of IOU vals"""
+    correct_count = 0 
+    false_count = 0
+    IOU_li = []
+    for i in range(target.shape[0]): #get pascal-criterium 
+        IOU = ops.box_iou(preds[i].unsqueeze(0),target[i].unsqueeze(0)) #outputs: Nx4, data["target"]: Mx4
+        IOU_li.append(IOU)
+        #print("IOU IS:",IOU)
+        if(IOU>sensitivity):
+            correct_count += 1
+        else:
+            false_count += 1
+    return correct_count,false_count,IOU_li
 
 #model.switch_debug()
 
@@ -683,29 +697,18 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #PASCAL CRITERIUM
-        for i in range(data["target"].shape[0]): #get pascal-criterium 
-            IOU = ops.box_iou(outputs[i].unsqueeze(0),data["target"][i].unsqueeze(0)) #outputs: Nx4, data["target"]: Mx4
-            if(IOU>0.5):
-                correct_count += 1
-            else:
-                false_count += 1
+        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=1)
+        correct_count += noTrue
+        false_count += noFalse
+        
         
         loss = loss_fn(outputs,target)
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
         optimizer.step()
-        	
-
         
-        
-        
-        """
-        if i%4==3: #report loss for every 4 batches (ie every 16 images)
-            last_loss = running_loss/4
-            print(' batch {} loss: {}'.format(i+1,last_loss))
-            running_loss = 0.
-          """
+       
         
         
     epochLoss = running_loss/counter 
@@ -748,7 +751,21 @@ save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
 
     
         
+def get_mean_model(trainloader):
+    mean_vals = torch.zeros(1,4)
+    for i, data in enumerate(trainloader):
+        mean_vals += data["target"]
+    mean_vals /= len(trainloader)
     
+    return mean_vals
+    
+def get_median_model(trainloader):
+    holder_t = torch.zeros(len(trainloader),4)
+    for i, data in enumerate(trainloader):
+        holder_t[i,:] = data["target"]
+    
+    median_t,_ = torch.median(holder_t,dim=0,keepdim=True)
+    return median_t
     
     
     
@@ -763,13 +780,19 @@ h6.remove()
 
 trainsettestLosses = []
 
+#eval on overfit-set
+meanModel = get_mean_model(oTrainLoader)
+medianModel = get_median_model(oTrainLoader)
 model.train(False)
 if(OVERFIT):
     print("Evaluating on first {} instances".format(len(overfitSet)))
-    meanBox = torch.zeros(len(overfitSet),4)
     
     no_overfit_correct = 0
     no_overfit_false = 0
+    no_mean_correct = 0
+    no_mean_false = 0
+    meanModel = torch.zeros(1,4)
+    
     with torch.no_grad():
         for i, data in enumerate(oTrainLoader):
             signal = data["signal"]
@@ -784,21 +807,35 @@ if(OVERFIT):
             print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
             trainsettestLosses.append(batchloss)
             print("IOU: ",IOU)
-            meanBox[i,:] = data["target"]
+            #generate mean model
+            
+            accScores = pascalACC(output,target)
+            no_mean_correct += accScores[0]
+            no_mean_false += accScores[1]
             
             
-    print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
-    print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
+            
+            
+    #print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
+    #print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
     
-    print("Overfitting finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
-
+    print("Overfitting finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
+    print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
 
 
 #---------------------TEST AND EVAL -------------#
 no_test_correct = 0 
 no_test_false = 0
+no_test_mean_correct = 0 
+no_test_mean_false = 0
+no_test_median_correct = 0
+no_test_median_false = 0
 testlosses = []
 correct_false_list = []
+
+meanModel = get_mean_model(oTrainLoader)
+medianModel = get_median_model(oTrainLoader)
+
 with torch.no_grad():
     running_loss = 0 
     for i, data in enumerate(testloader):
@@ -817,13 +854,26 @@ with torch.no_grad():
             correct_false_list.append([name,str(0)])
         no_test_correct += accScores[0]        
         no_test_false += accScores[1]
+        
+        accScores = pascalACC(meanModel,target)
+        no_test_mean_correct += accScores[0]
+        no_test_mean_false += accScores[1]
+        
+        accScores = pascalACC(medianModel,target)
+        no_test_median_correct += accScores[0]
+        no_test_median_false += accScores[1]
+        
+        
         if i!=0 and i%100==0:
             print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
             running_loss = 0 
 
-           
+testmeanAcc = no_test_mean_correct/(no_test_mean_false+no_test_mean_correct)
+testmedianAcc = no_test_median_correct/(no_test_median_false+no_test_median_correct)
         
-print("Testing finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
+print("Testing finished. \nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
+print("Mean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
+print("Median model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_median_correct,no_test_median_false+no_test_median_correct,testmedianAcc))    
     
 
 def save_fig(root_dir,classString,pltobj,title=None,mode=None):
@@ -868,18 +918,4 @@ else:
     #plt.savefig(root_dir+"{}.jpg".format(classString))
 
     
-#plt.figure(2)
-#plt.plot(testlosses)
-#plt.title("{}-image-model L1 losses on testset".format(len(overfitSet)))
-#plt.show()
-            
-        
 
-
-# """
-# for i_batch, sample_batched in enumerate(trainloader):
-#     print(i_batch,sample_batched)
-#     batch = sample_batched
-#     if i_batch==1:
-#         break
-# """
