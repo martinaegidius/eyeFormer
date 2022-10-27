@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed Sep 28 15:13:32 2022
+Created on Wed Oct 26 11:03:36 2022
 
 @author: max
 """
-
 from load_POET import pascalET
 import os 
 from torch.utils.data import Dataset, DataLoader
@@ -15,7 +14,6 @@ import torch.nn as nn
 import numpy as np
 from torchvision import transforms, ops
 import math
-
 
 class AirplanesBoatsDataset(Dataset):
     def __init__(self,pascalobj,root_dir,classes,transform=None):
@@ -292,15 +290,16 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
         outTensor[:numEntries,:] = torch.from_numpy(inArr[-numEntries:,:]) #get all
         return outTensor
     
+
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 torch.manual_seed(3)
 CHECK_BALANCE = False
-GENERATE_DATASET = False
-OVERFIT = False
-NUM_IN_OVERFIT = 1
+GENERATE_DATASET = True
+OVERFIT = True
+NUM_IN_OVERFIT = 4
 classString = "airplanes"
 SAVEFIGS = False
-BATCH_SZ = 3
+BATCH_SZ = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -451,21 +450,20 @@ and build
 """    
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def generate_square_subsequent_mask(sz: int) -> torch.Tensor: 
-    return torch.triu(torch.ones(sz,sz)*float('-inf'),diagonal=1)
-
-#define transformer model. Goal: overfitting
 class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=128,output_dim=4,dropout=0.0):
+        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.1):
             self.d_model = input_dim
-            super(eyeFormer_baseline,self).__init__() #get class instance
-            self.pos_encoder = PositionalEncoding(input_dim,dropout)
-            encoderLayers = nn.TransformerEncoderLayer(d_model=input_dim,nhead=2,dim_feedforward=hidden_dim,dropout=dropout,activation="relu",batch_first=True,norm_first=True) #False due to positional encoding made on batch in middle
+            super().__init__() #get class instance
+            #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
+            self.pos_encoder = PositionalEncoding(self.d_model,dropout)
+            self.encoder = TransformerEncoder(1,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
-            self.cls_token = nn.Parameter(torch.zeros(1,2),requires_grad=True)
-            self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 3)
+            self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
+            #self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
+            
+            
             #self.decoder = nn.Linear(64,4,bias=True) 
-            self.clsdecoder = nn.Linear(2,output_dim,bias=True)
+            self.clsdecoder = nn.Linear(self.d_model,4,bias=True)
             self.DEBUG = False
         
         def switch_debug(self):
@@ -476,31 +474,18 @@ class eyeFormer_baseline(nn.Module):
             print("Debugging mode turned "+string)
             
             
-        def forward(self,x,src_padding_mask=None):
-            
-            
-            if x.dim()==1: #fix for invalid entries. They are zeroed anyway, so full mask will apply (ie no forward pass)
+        def forward(self,x,src_padding_mask=None):    
+            if x.dim()==1: #fix for batch-size 1 
                 x = x.unsqueeze(0)
-                if self.DEBUG==True:
-                    print("unsqueezed x in forward\n")
-                    self.DEBUG = False #just for catching first appliance for debugging 
-                
-            bs = x.shape[0] #batch-first 
-            #print("key-mask\n",src_padding_mask)
-            clsmask = torch.zeros(bs,1).to(dtype=torch.bool) #row-vector for each batch
+            
+            bs = x.shape[0]
+
             if src_padding_mask==None: 
-                src_padding_mask = torch.zeros(bs,32).to(dtype=torch.bool) #look at all points. Used for forwarding input without mask ie debugging
+                src_padding_mask = torch.zeros(bs,x.shape[1]).to(dtype=torch.bool)
+            #print("key-mask\n",src_padding_mask)
+            clsmask = torch.zeros(bs,1).to(dtype=torch.bool)
             mask = torch.cat((clsmask,src_padding_mask[:,:].reshape(bs,32)),1) #unmask cls-token
-            if self.DEBUG==True:
-                print("1: reshaped mask\n",mask)
-            
-            
-            #src-mask needs be [batch-size,seqlen].
-            """
-            If a BoolTensor is provided, positions with True is not allowed to attend while False values will be unchanged. If a FloatTensor is provided, it will be added to the attention weight.
-            https://stackoverflow.com/questions/62170439/difference-between-src-mask-and-src-key-padding-mask
-            """
-             
+           
             x = x* math.sqrt(self.d_model) #as this in torch tutorial but dont know why
             x = torch.cat((self.cls_token.expand(x.shape[0],1,2),x),1) #concat along sequence-dimension. Copy bs times
             if self.DEBUG==True:
@@ -511,7 +496,7 @@ class eyeFormer_baseline(nn.Module):
             
             #print("Src_padding mask is: ",src_padding_mask)
             #print("pos encoding shape: ",x.shape)
-            output = self.transformer_encoder(x,src_key_padding_mask=mask)
+            output = self.encoder(x,mask)
             if self.DEBUG==True:
                 print("4: Transformer encoder output:\n",output)
             #print("encoder output:\n",output)
@@ -523,7 +508,60 @@ class eyeFormer_baseline(nn.Module):
                 print("5: linear layer based on CLS-token output: \n",output)
             
             return output
+            
+           
+            
         
+
+class EncoderBlock(nn.Module):
+        
+    """
+    Inputs:
+        input_dim - Dimensionality of the input
+        num_heads - Number of heads to use in the attention block
+        dim_feedforward - Dimensionality of the hidden layer in the MLP
+        dropout - Dropout probability to use in the dropout layers
+    """         
+    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.0):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(input_dim,num_heads,dropout,batch_first=True)
+        
+        #two-layer FFN
+        self.linear_net = nn.Sequential(nn.Linear(input_dim,dim_feedforward),
+                                        nn.Dropout(dropout),
+                                        nn.ReLU(inplace=True),
+                                        nn.Linear(dim_feedforward,input_dim))
+        #layer normalization: 
+        self.norm1 = nn.LayerNorm((seq_len+1,input_dim))
+        self.norm2 = nn.LayerNorm((seq_len+1,input_dim))
+        self.dropout = nn.Dropout(p=dropout)
+        
+    def forward(self, x, mask=None):
+       # Attention part
+       attn_out, _ = self.self_attn(x,x,x,key_padding_mask=mask)
+       x = x + self.dropout(attn_out)
+       x = self.norm1(x)
+
+       # MLP part
+       linear_out = self.linear_net(x)
+       x = x + self.dropout(linear_out)
+       x = self.norm2(x)
+
+       return x
+     
+
+class TransformerEncoder(nn.Module):
+    def __init__(self,num_layers,**block_args):
+        super().__init__()
+        self.layers = nn.ModuleList([EncoderBlock(**block_args) for _ in range(num_layers)])
+        
+    def forward(self,x,mask=None):
+        for l in self.layers: 
+            x = l(x,mask)
+        return x 
+    
+    
+     
 class PositionalEncoding(nn.Module):
     ###Probably change max_len of pos-encoding
     def __init__(self,d_model,dropout = 0.0,max_len = 33):
@@ -552,71 +590,7 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:,:x.size(1),:] #[bs x seq_len x embedding dim]
         return self.dropout(x)
 
-            
-   
-
-
-
-#lossF = torch.nn.CrossEntropyLoss() #Kristian undrer sig over hvordan man kan bruge den
-#lossF = ops.complete_box_iou_loss()
-
-
-def getNumberParams(model):
-    print(sum(p.numel() for p in model.parameters()))
-    return 
-
-
-def RMSELoss(output,target):
-    """
-    Get mean square error averaged on batch
-    Calculates ((sqrt(x_true)- sqrt(x_pred))ˆ2 + (sqrt(y_true)- sqrt(y_pred))ˆ2) for all points and makes sequential sum
-    Parameters
-    ----------
-    output : TYPE
-        DESCRIPTION.
-    target : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    loss = 0 
-    if target.shape[0]==4: 
-        target = target.unsqueeze(0)
-    for i in range(target.shape[0]):
-        loss += torch.pow(torch.sqrt(output[i])-torch.sqrt(target[i]),2)
-    
-    return torch.mean(loss) #average per batch loss
-
-def MSELoss(output,target):
-    """
-    Get mean square error averaged on batch
-    Calculates ((sqrt(x_true)- sqrt(x_pred))ˆ2 + (sqrt(y_true)- sqrt(y_pred))ˆ2) for all points and makes sequential sum
-    Parameters
-    ----------
-    output : TYPE
-        DESCRIPTION.
-    target : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    Loss
-    #Todo: consider adding additional penalties for out-of-image guesses (ie x<0 and x>1)
-
-    """
-    loss = 0 
-    if target.shape[0]==4: 
-        target = target.unsqueeze(0)
-    for i in range(target.shape[0]):
-        loss += torch.pow(output[i]-target[i],2)
-    
-    return torch.mean(loss) #average per batch loss
-
-
-def pascalACC(preds,labels):
+def pascalACC(preds,labels): #TODO: does not work for batched input 
     no_corr = 0 
     no_false = 0
     IOU_li = []
@@ -642,11 +616,12 @@ def getActivation(name):
         activation[name] = output.detach()
     return hook
 #register forward hooks
-h1 = model.transformer_encoder.register_forward_hook(getActivation('encoder'))
-h2 = model.clsdecoder.register_forward_hook(getActivation('linear'))
-h3 = model.transformer_encoder.layers[0].linear1.register_forward_hook(getActivation('before_relu'))
-h4 = model.transformer_encoder.layers[0].linear2.register_forward_hook(getActivation('after_relu'))
-h5 = model.transformer_encoder.layers[0].norm2.register_forward_hook(getActivation('after norm2'))
+#h1 = model.encoder.layers[0].self_attn.register_forward_hook(getActivation('MHA'))
+h2 = model.clsdecoder.register_forward_hook(getActivation('CLS_lin'))
+h3 = model.encoder.layers[0].linear_net[1].register_forward_hook(getActivation('before_relu'))
+h4 = model.encoder.layers[0].linear_net[2].register_forward_hook(getActivation('after_relu'))
+h5 = model.encoder.layers[0].linear_net[2].register_forward_hook(getActivation('after_lin_norm'))
+h6 = model.encoder.layers[0].norm2.register_forward_hook(getActivation('MHA_norm'))
 
 def checkDeadRelu(t,show=False):
     """
@@ -666,9 +641,9 @@ def checkDeadRelu(t,show=False):
     return torch.tensor([num_no_active,t.numel()])
 
 
-model.switch_debug()
+#model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
@@ -698,12 +673,12 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         outputs = model(data["signal"],mask)
         
         #register activations 
-        encoder_list.append(activation["encoder"])
-        linear_list.append(activation["linear"])
+        #encoder_list.append(activation['MHA'])
+        linear_list.append(activation["CLS_lin"])
         lin1_list.append(activation["before_relu"])
         lin2_list.append(activation["after_relu"])
-        dead_neurons_lin1.append(checkDeadRelu(activation["before_relu"]))
-        dead_neurons_lin2.append(checkDeadRelu(activation["after_relu"]))
+        #dead_neurons_lin1.append(checkDeadRelu(activation["before_relu"]))
+        #dead_neurons_lin2.append(checkDeadRelu(activation["after_relu"]))
         if(negative_print==True):
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
@@ -777,10 +752,13 @@ save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
     
     
     
-h1.remove()
+#h1.remove()
 h2.remove()   
 h3.remove()
 h4.remove()
+h5.remove()
+h6.remove()
+
 
 
 trainsettestLosses = []
@@ -817,28 +795,35 @@ if(OVERFIT):
 
 
 #---------------------TEST AND EVAL -------------#
-# no_test_correct = 0 
-# no_test_false = 0
-# testlosses = []
-# with torch.no_grad():
-#     running_loss = 0 
-#     for i, data in enumerate(testloader):
-#         signal = data["signal"]
-#         target = data["target"]
-#         mask = data["mask"]
-#         output = model(signal,mask)
-#         batchloss = loss_fn(target,output)
-#         running_loss += batchloss.item()
-#         testlosses.append(batchloss.item())
-#         accScores = pascalACC(output,target)
-#         no_test_correct += accScores[0]
-#         no_test_false += accScores[1]
-#         if i!=0 and i%100==0:
-#             print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
-#             running_loss = 0 
+no_test_correct = 0 
+no_test_false = 0
+testlosses = []
+correct_false_list = []
+with torch.no_grad():
+    running_loss = 0 
+    for i, data in enumerate(testloader):
+        signal = data["signal"]
+        target = data["target"]
+        mask = data["mask"]
+        name = data["file"]
+        output = model(signal,mask)
+        batchloss = loss_fn(target,output)
+        running_loss += batchloss.item()
+        testlosses.append(batchloss.item())
+        accScores = pascalACC(output,target)
+        if(accScores[0]==1):
+            correct_false_list.append([name,str(1)])
+        else:
+            correct_false_list.append([name,str(0)])
+        no_test_correct += accScores[0]        
+        no_test_false += accScores[1]
+        if i!=0 and i%100==0:
+            print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
+            running_loss = 0 
+
+           
         
-        
-# print("Testing finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
+print("Testing finished. Accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
     
 
 def save_fig(root_dir,classString,pltobj,title=None,mode=None):
@@ -860,8 +845,13 @@ def save_fig(root_dir,classString,pltobj,title=None,mode=None):
 
 import matplotlib.pyplot as plt
 epochPlot = [x+1 for x in range(len(epochLossLI))]
-plt.plot(epochPlot,epochLossLI)   
-plt.xticks(range(1,len(epochLossLI)+1))
+plt.plot(epochPlot,epochLossLI)
+if EPOCHS > 100:
+    xticks = range(1,len(epochLossLI)+1,10)
+else:
+    xticks = range(1,len(epochLossLI)+1)
+    
+plt.xticks(xticks)
 plt.ylabel("L1-LOSS") 
 plt.xlabel("Epoch")
 if(OVERFIT):
@@ -893,4 +883,3 @@ else:
 #     if i_batch==1:
 #         break
 # """
-
