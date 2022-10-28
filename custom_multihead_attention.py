@@ -296,7 +296,7 @@ torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 4
+NUM_IN_OVERFIT = 47
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
