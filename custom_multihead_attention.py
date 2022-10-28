@@ -14,6 +14,7 @@ import torch.nn as nn
 import numpy as np
 from torchvision import transforms, ops
 import math
+from sklearn.model_selection import KFold
 
 class AirplanesBoatsDataset(Dataset):
     def __init__(self,pascalobj,root_dir,classes,transform=None):
