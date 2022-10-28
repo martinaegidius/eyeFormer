@@ -297,7 +297,7 @@ torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 47
+NUM_IN_OVERFIT = 4
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
@@ -409,6 +409,7 @@ if(GENERATE_DATASET == False):
 #make dataloaders of chosen split
 
 trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
+
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 #for model overfitting
 overfitSet = torch.utils.data.Subset(train,torch.randint(0,len(train),(NUM_IN_OVERFIT,1)))
@@ -664,19 +665,18 @@ encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
 dead_neurons_lin2 = []
 
-def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_print=False) -> float: 
+def train_one_epoch(model,loss,trainloader,negative_print=False) -> float: 
+    """Trains one epoch using K-folds-split for validation set"""
+    
     running_loss = 0.
     #src_mask = generate_square_subsequent_mask(32).to(device)
     correct_count = 0
     false_count = 0
-    batchwiseLoss = []
     counter = 0
     
-    if(overfit==True):
-        trainloader = oTrainLoader
-    else: 
-        trainloader = trainloader #a bit clumsy, may be refactored
-    
+    #for model overfitting
+         
+    model.train()
     for i, data in enumerate(trainloader):
         counter += 1
         optimizer.zero_grad() #reset grads
@@ -689,9 +689,9 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         
         #register activations 
         #encoder_list.append(activation['MHA'])
-        linear_list.append(activation["CLS_lin"])
-        lin1_list.append(activation["before_relu"])
-        lin2_list.append(activation["after_relu"])
+        #linear_list.append(activation["CLS_lin"])
+        #lin1_list.append(activation["before_relu"])
+        #lin2_list.append(activation["after_relu"])
         #dead_neurons_lin1.append(checkDeadRelu(activation["before_relu"]))
         #dead_neurons_lin2.append(checkDeadRelu(activation["after_relu"]))
         if(negative_print==True):
@@ -709,46 +709,112 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
         optimizer.step()
         
-       
         
-        
-    epochLoss = running_loss/counter 
-    epochAcc = correct_count/len(trainloader.dataset)
-    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc
+        epochTrainLoss = running_loss/counter 
+        epochAcc = correct_count/len(trainloader.dataset)
+        return epochTrainLoss,correct_count,false_count,target,data["signal"],mask,epochAcc
+    
 
 
-
-epoch_number = 0
-EPOCHS = 100
+EPOCHS = 250
 epochLoss = 0 
-model.train(True)
+NFOLDS = len(overfitSet)
+
 epochLossLI = []
 epochAccLI = []
+valLossLI = []
 torch.autograd.set_detect_anomaly(True)
 
-for epoch in range(EPOCHS):
-    model.train(True)
-    try:
-        print("EPOCH {}:".format(epoch_number+1))    
-        epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
-        print("epoch loss {}".format(epochLoss))
-        epochLossLI.append(epochLoss)
-        epochAccLI.append(epochAcc)
-        epoch_number += 1 
-    except KeyboardInterrupt:
-        print("Manual early stopping triggered")
-        break
+#----TRAINING-LOOOP-----#
+#https://www.geeksforgeeks.org/training-neural-networks-with-validation-using-pytorch/
+#https://github.com/christianversloot/machine-learning-articles/blob/main/how-to-use-k-fold-cross-validation-with-pytorch.md
+min_valid_loss = np.inf
+kfold = KFold(n_splits = NFOLDS, shuffle = True)
+results ={}
 
-def save_epochs(loss,acc,classString,root_dir,mode):
+if(OVERFIT==True):
+    train = overfitSet
+    print("Running on overfit-set")
+    
+for fold, (train_ids,val_ids) in enumerate(kfold.split(train)): #apply fold
+    train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
+    val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
+    trainloader = DataLoader(train,batch_size=BATCH_SZ,num_workers=0,sampler=train_subsampler)
+    valloader = DataLoader(train,batch_size=BATCH_SZ,num_workers=0,sampler=val_subsampler)    
+    print(f'FOLD {fold}')
+    print('--------------------------------')
+    
+    model = eyeFormer_baseline()
+    optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+    loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
+    
+    for epoch in range(EPOCHS):
+        try:
+            print("training on fold{}...".format(fold))
+            epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,negative_print=False)
+            print(f'Epoch {epoch+1} \t\t Training Loss: {epochLoss}')
+            epochLossLI.append(epochLoss)
+            epochAccLI.append(epochAcc)
+            
+            #EVAL on VAL-set
+            
+        except KeyboardInterrupt:
+                print("Manual early stopping triggered")
+                break
+    
+    print("Evaluating on fold {}".format(fold))
+    valcounter = 0
+    valid_loss = 0.0
+    no_eval_correct = 0
+    no_eval_false = 0
+    model.eval()
+    for i, data in enumerate(valloader):
+        valcounter += 1 
+        target = data["target"]
+        mask = data["mask"]
+        signal= data["signal"]
+        preds = model(signal,mask)
+        loss = loss_fn(preds,target)
+        valid_loss += loss.item()
+        accScores = pascalACC(preds,target)
+        no_eval_correct += accScores[0]
+        no_eval_false += accScores[1]
+        
+    epochValidLoss = valid_loss/valcounter
+    acc = no_eval_correct/(no_eval_correct+no_eval_false)
+    print("Validation-loss: ",epochValidLoss)
+    print("Accuracy with PASCAL-crietrium: {}/{} : {}".format(no_eval_correct,no_eval_correct+no_eval_false,no_eval_correct/(no_eval_correct+no_eval_false)))
+    valLossLI.append(epochValidLoss)
+    results[fold] = acc
+    
+    if min_valid_loss > epochValidLoss:
+            print(f'Validation Loss Decreased({min_valid_loss:.6f}--->{epochValidLoss:.6f}) \t Saving The Model')
+            min_valid_loss = epochValidLoss
+            # Saving State Dict
+            torch.save(model.state_dict(), 'saved_model.pth')
+            
+
+# Print fold results
+print(f'K-FOLD CROSS VALIDATION LOSS RESULTS FOR {NFOLDS} FOLDS')
+print('--------------------------------')
+sum = 0.0
+for key, value in results.items():
+  print(f'Fold {key}: {value} %')
+  sum += value
+print(f'Average loss: {sum/len(results.items())} ')
+    
+
+def save_epochs(loss,acc,valLoss,classString,root_dir,mode):
     path = root_dir + classString
     if not os.path.exists(path):
         os.mkdir(path)
         
     torch.save(loss,path+"/"+classString+"_"+mode+"_losses.pth")
     torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
+    torch.save(valLoss,path+"/"+classString+"_"+mode+"_valLoss.pth")
     return
 
-save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
+save_epochs(epochLossLI,epochAccLI,valLossLI,classString,root_dir,mode="train")
 
     
         
