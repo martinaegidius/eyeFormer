@@ -297,7 +297,7 @@ torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 47
+NUM_IN_OVERFIT = 4
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
@@ -457,7 +457,7 @@ class eyeFormer_baseline(nn.Module):
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
             self.pos_encoder = PositionalEncoding(self.d_model,dropout)
-            self.encoder = TransformerEncoder(1,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
+            self.encoder = TransformerEncoder(2,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
             #self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
@@ -719,7 +719,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
 
 
 epoch_number = 0
-EPOCHS = 100
+EPOCHS = 250
 epochLoss = 0 
 model.train(True)
 epochLossLI = []
@@ -807,8 +807,10 @@ if(OVERFIT):
             IOU = accScores[2]
             print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
             trainsettestLosses.append(batchloss)
+            
             print("IOU: ",IOU)
-            #generate mean model
+            
+            
             
             accScores = pascalACC(output,target)
             no_mean_correct += accScores[0]
@@ -850,9 +852,11 @@ with torch.no_grad():
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
         if(accScores[0]==1):
-            correct_false_list.append([name,str(1)])
+            correct_false_list.append([name,str(1),accScores[2],target,output]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
         else:
-            correct_false_list.append([name,str(0)])
+            correct_false_list.append([name,str(0),accScores[2],target,output])
+            
+        
         no_test_correct += accScores[0]        
         no_test_false += accScores[1]
         
