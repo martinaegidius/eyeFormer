@@ -716,7 +716,7 @@ def train_one_epoch(model,loss,trainloader,negative_print=False) -> float:
     
 
 
-EPOCHS = 250
+EPOCHS = 200
 epochLoss = 0 
 NFOLDS = len(overfitSet)
 
@@ -731,11 +731,22 @@ torch.autograd.set_detect_anomaly(True)
 min_valid_loss = np.inf
 kfold = KFold(n_splits = NFOLDS, shuffle = True)
 results ={}
+epochLossD = {}
+epochAccD = {}
+valLossD = {}
+valAccD = {}
+for fold in range(NFOLDS):
+    epochLossD[fold] = []
+    epochAccD[fold] = []
+    valLossD[fold] = []
+    valAccD[fold] = []
+    
 
 if(OVERFIT==True):
     train = overfitSet
     print("Running on overfit-set")
     
+
 for fold, (train_ids,val_ids) in enumerate(kfold.split(train)): #apply fold
     train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
     val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
@@ -753,55 +764,113 @@ for fold, (train_ids,val_ids) in enumerate(kfold.split(train)): #apply fold
             print("training on fold{}...".format(fold))
             epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,negative_print=False)
             print(f'Epoch {epoch+1} \t\t Training Loss: {epochLoss}')
-            epochLossLI.append(epochLoss)
-            epochAccLI.append(epochAcc)
             
+            epochLossD[fold].append(epochLoss)
+            epochAccD[fold].append(epochAcc)
+            
+            #old: before dict-format
+            #epochLossLI.append(epochLoss)
+            #epochAccLI.append(epochAcc)
             #EVAL on VAL-set
+            print("Evaluating on fold {}".format(fold))
+            valcounter = 0
+            valid_loss = 0.0
+            no_eval_correct = 0
+            no_eval_false = 0
+            model.eval()
+            for i, data in enumerate(valloader):
+                valcounter += 1 
+                target = data["target"]
+                mask = data["mask"]
+                signal= data["signal"]
+                preds = model(signal,mask)
+                loss = loss_fn(preds,target)
+                valid_loss += loss.item()
+                accScores = pascalACC(preds,target)
+                no_eval_correct += accScores[0]
+                no_eval_false += accScores[1]
+                
+            epochValidLoss = valid_loss/valcounter
+            acc = no_eval_correct/(no_eval_correct+no_eval_false)
+            print("Validation-loss: ",epochValidLoss)
+            print("Validation accuracy with PASCAL-crietrium: {}/{} : {}".format(no_eval_correct,no_eval_correct+no_eval_false,no_eval_correct/(no_eval_correct+no_eval_false)))
+            valLossLI.append(epochValidLoss)
+            valLossD[fold].append(epochValidLoss)
+            valAccD[fold].append(acc)
+            results[fold] = acc
+            
+            if min_valid_loss > epochValidLoss:
+                    print(f'Validation Loss Decreased({min_valid_loss:.6f}--->{epochValidLoss:.6f}) \t Saving The Model')
+                    min_valid_loss = epochValidLoss
+                    # Saving State Dict
+                    torch.save(model.state_dict(), 'saved_model.pth')
+            
             
         except KeyboardInterrupt:
                 print("Manual early stopping triggered")
                 break
     
-    print("Evaluating on fold {}".format(fold))
-    valcounter = 0
-    valid_loss = 0.0
-    no_eval_correct = 0
-    no_eval_false = 0
-    model.eval()
-    for i, data in enumerate(valloader):
-        valcounter += 1 
-        target = data["target"]
-        mask = data["mask"]
-        signal= data["signal"]
-        preds = model(signal,mask)
-        loss = loss_fn(preds,target)
-        valid_loss += loss.item()
-        accScores = pascalACC(preds,target)
-        no_eval_correct += accScores[0]
-        no_eval_false += accScores[1]
-        
-    epochValidLoss = valid_loss/valcounter
-    acc = no_eval_correct/(no_eval_correct+no_eval_false)
-    print("Validation-loss: ",epochValidLoss)
-    print("Accuracy with PASCAL-crietrium: {}/{} : {}".format(no_eval_correct,no_eval_correct+no_eval_false,no_eval_correct/(no_eval_correct+no_eval_false)))
-    valLossLI.append(epochValidLoss)
-    results[fold] = acc
     
-    if min_valid_loss > epochValidLoss:
-            print(f'Validation Loss Decreased({min_valid_loss:.6f}--->{epochValidLoss:.6f}) \t Saving The Model')
-            min_valid_loss = epochValidLoss
-            # Saving State Dict
-            torch.save(model.state_dict(), 'saved_model.pth')
             
 
-# Print fold results
-print(f'K-FOLD CROSS VALIDATION LOSS RESULTS FOR {NFOLDS} FOLDS')
-print('--------------------------------')
-sum = 0.0
-for key, value in results.items():
-  print(f'Fold {key}: {value} %')
-  sum += value
-print(f'Average loss: {sum/len(results.items())} ')
+
+def avgOverFolds(NFOLDS,EPOCHS,lossD):
+    """
+    Parameters
+    ----------
+    NFOLDS : NUMBER OF FOLDS IN TRAINING-LOOP.
+    lossD : DICTIONARY OF TYPE: 
+        key:   fold-no 
+        index: epoch-1
+        value: loss on model evaluated on training-fold
+
+    Returns
+    -------
+    List, containing the average per-epoch training-error
+
+    """
+    avgEpochLoss = []
+    for epoch in range(EPOCHS):
+        seqsum = 0.0
+        for fold in range(NFOLDS):
+            seqsum += lossD[fold][epoch]
+            print(lossD[fold][epoch])
+            
+        avgEpochLoss.append(seqsum/NFOLDS)
+    
+    return avgEpochLoss
+
+def avgACCOverFolds(accD):
+    """
+    Parameters
+    ----------
+    accD : dictionary
+        dictionary containing accuracies for the epoch and fold. Format: 
+            key:    fold
+            index:  epoch-1
+            value:  accuracy of model evaluated on fold
+
+    Returns
+    -------
+    avgAccL :
+        List, containing average per-epoch accuracy.
+    """
+    avgAccL = []
+    for epoch in range(len(accD[list(accD.keys())[0]])):
+        seqsum = 0.0
+        for key,_ in accD.items():
+            seqsum += accD[key][epoch]
+       
+        avgAccL.append(seqsum/len(accD))
+    return avgAccL
+        
+    
+    
+
+#get lists of mean accuracys for training and validation of models 
+avgEpochTrainLosses,avgEpochTrainACC = avgOverFolds(NFOLDS,EPOCHS,epochLossD),avgACCOverFolds(epochAccD)
+avgEpochValLosses,avgEpochValACC = avgOverFolds(NFOLDS,EPOCHS,valLossD),avgACCOverFolds(valAccD)
+
     
 
 def save_epochs(loss,acc,valLoss,classString,root_dir,mode):
@@ -814,7 +883,20 @@ def save_epochs(loss,acc,valLoss,classString,root_dir,mode):
     torch.save(valLoss,path+"/"+classString+"_"+mode+"_valLoss.pth")
     return
 
+def save_data(data,descriptor,root_dir,mode):
+    path = root_dir + classString
+    if not os.path.exists(path):
+        os.mkdir(path)
+        
+    torch.save(data,path+"/"+classString+"_"+mode+"_"+descriptor+".pth")
+    return
+
 save_epochs(epochLossLI,epochAccLI,valLossLI,classString,root_dir,mode="train")
+save_data(avgEpochTrainLosses,"avgEpochTrainLoss",root_dir,mode="train")
+save_data(avgEpochTrainACC,"avgEpochTrainACC",root_dir,mode="train")
+save_data(avgEpochValLosses,"avgEpochTrainLoss",root_dir,mode="val")
+save_data(avgEpochValACC,"avgEpochTrainACC",root_dir,mode="val")
+
 
     
         
@@ -846,6 +928,7 @@ h6.remove()
 
 
 trainsettestLosses = []
+
 
 #eval on overfit-set
 meanModel = get_mean_model(oTrainLoader)
@@ -898,7 +981,7 @@ no_test_mean_false = 0
 no_test_median_correct = 0
 no_test_median_false = 0
 testlosses = []
-correct_false_list = []
+correct_false_list = ["filename","accuracy","ground-truth","prediction"]
 
 meanModel = get_mean_model(oTrainLoader)
 medianModel = get_median_model(oTrainLoader)
@@ -916,9 +999,9 @@ with torch.no_grad():
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
         if(accScores[0]==1):
-            correct_false_list.append([name,str(1)])
+            correct_false_list.append([name,str(1),target,output])
         else:
-            correct_false_list.append([name,str(0)])
+            correct_false_list.append([name,str(0),target,output])
         no_test_correct += accScores[0]        
         no_test_false += accScores[1]
         
@@ -959,30 +1042,42 @@ def save_fig(root_dir,classString,pltobj,title=None,mode=None):
 
     
 
-
 import matplotlib.pyplot as plt
-epochPlot = [x+1 for x in range(len(epochLossLI))]
-plt.plot(epochPlot,epochLossLI)
+plt.plot(avgEpochTrainLosses)
+plt.plot(avgEpochValLosses)
+plt.legend(["train","val"])
 if EPOCHS > 100:
-    xticks = range(1,len(epochLossLI)+1,10)
+     xticks = range(0,len(epochLossLI)-1,10)
 else:
-    xticks = range(1,len(epochLossLI)+1)
-    
+     xticks = range(0,len(epochLossLI)-1,10)
+
 plt.xticks(xticks)
 plt.ylabel("L1-LOSS") 
-plt.xlabel("Epoch")
-if(OVERFIT):
-    plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
-    if SAVEFIGS:
-        save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
-    #plt.savefig(root_dir+"{}-image.jpg")
+plt.xlabel("Epoch NO.")
+
+# import matplotlib.pyplot as plt
+# epochPlot = [x+1 for x in range(len(epochLossLI))]
+# plt.plot(epochPlot,epochLossLI)
+# if EPOCHS > 100:
+#      xticks = range(1,len(epochLossLI)+1,10)
+# else:
+#      xticks = range(1,len(epochLossLI)+1)
+    
+# plt.xticks(xticks)
+# plt.ylabel("L1-LOSS") 
+# plt.xlabel("Epoch")
+# if(OVERFIT):
+#     plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
+#     if SAVEFIGS:
+#         save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
+#     #plt.savefig(root_dir+"{}-image.jpg")
     
 
-else: 
-    plt.title("Train-error on {}[{}] images".format(classString,len(train)))
-    if SAVEFIGS:
-        save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
-    #plt.savefig(root_dir+"{}.jpg".format(classString))
+# else: 
+#     plt.title("Train-error on {}[{}] images".format(classString,len(train)))
+#     if SAVEFIGS:
+#         save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
+#     #plt.savefig(root_dir+"{}.jpg".format(classString))
 
     
 
