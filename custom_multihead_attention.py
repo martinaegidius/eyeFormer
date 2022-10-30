@@ -716,7 +716,7 @@ def train_one_epoch(model,loss,trainloader,negative_print=False) -> float:
     
 
 
-EPOCHS = 200
+EPOCHS = 50
 epochLoss = 0 
 NFOLDS = len(overfitSet)
 
@@ -999,9 +999,9 @@ with torch.no_grad():
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
         if(accScores[0]==1):
-            correct_false_list.append([name,str(1),target,output])
+            correct_false_list.append([name,str(1),accScores[2],target,output]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
         else:
-            correct_false_list.append([name,str(0),target,output])
+            correct_false_list.append([name,str(0),accScores[2],target,output])
         no_test_correct += accScores[0]        
         no_test_false += accScores[1]
         
@@ -1020,6 +1020,8 @@ with torch.no_grad():
 
 testmeanAcc = no_test_mean_correct/(no_test_mean_false+no_test_mean_correct)
 testmedianAcc = no_test_median_correct/(no_test_median_false+no_test_median_correct)
+
+save_data(correct_false_list,"testresults",root_dir,"test")
         
 print("Testing finished. \nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
 print("Mean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
