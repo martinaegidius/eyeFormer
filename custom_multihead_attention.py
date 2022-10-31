@@ -846,15 +846,16 @@ with torch.no_grad():
         target = data["target"]
         mask = data["mask"]
         name = data["file"]
+        size = data["size"]
         output = model(signal,mask)
         batchloss = loss_fn(target,output)
         running_loss += batchloss.item()
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
         if(accScores[0]==1):
-            correct_false_list.append([name,str(1),accScores[2],target,output]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            correct_false_list.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
         else:
-            correct_false_list.append([name,str(0),accScores[2],target,output])
+            correct_false_list.append([name,str(0),accScores[2],target,output,size])
             
         
         no_test_correct += accScores[0]        
