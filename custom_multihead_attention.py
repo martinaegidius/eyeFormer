@@ -457,7 +457,7 @@ class eyeFormer_baseline(nn.Module):
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
             self.pos_encoder = PositionalEncoding(self.d_model,dropout)
-            self.encoder = TransformerEncoder(2,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
+            self.encoder = TransformerEncoder(1,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
             #self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
@@ -659,7 +659,7 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 #model.switch_debug()
 
 optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
+loss_fn = nn.SmoothL1Loss(beta=0.33) #default: mean and beta=1.0
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
 dead_neurons_lin2 = []
@@ -698,7 +698,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=1)
+        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
         correct_count += noTrue
         false_count += noFalse
         
@@ -719,7 +719,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
 
 
 epoch_number = 0
-EPOCHS = 250
+EPOCHS = 1000
 epochLoss = 0 
 model.train(True)
 epochLossLI = []
@@ -779,6 +779,9 @@ h6.remove()
 
 
 
+
+#---------------------TEST AND EVAL -------------#
+#1. TEST-LOOP ON TRAIN-SET
 trainsettestLosses = []
 
 #eval on overfit-set
@@ -793,24 +796,29 @@ if(OVERFIT):
     no_mean_correct = 0
     no_mean_false = 0
     meanModel = torch.zeros(1,4)
+    overfit_save_struct = []
     
     with torch.no_grad():
         for i, data in enumerate(oTrainLoader):
             signal = data["signal"]
             target = data["target"]
             mask = data["mask"]
+            size = data["size"]
+            name = data["file"]
             output = model(signal,mask)
             batchloss = loss_fn(target,output)
             accScores = pascalACC(output,target)
             no_overfit_correct += accScores[0]
             no_overfit_false += accScores[1]
             IOU = accScores[2]
+            if(accScores[0]==1):
+                overfit_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            else:
+                overfit_save_struct.append([name,str(0),accScores[2],target,output,size])
             print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
             trainsettestLosses.append(batchloss)
             
             print("IOU: ",IOU)
-            
-            
             
             accScores = pascalACC(output,target)
             no_mean_correct += accScores[0]
@@ -819,14 +827,15 @@ if(OVERFIT):
             
             
             
-    #print("Average box of {}-image sample is: {}".format(len(overfitSet),torch.mean(meanBox,0)))
-    #print("Loss on last sample when using mean:",loss_fn(target.squeeze(0),torch.mean(meanBox,0)))
-    
-    print("Overfitting finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
+    print("Overfitting evaluation finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"overfit_test_results.pth")
+    
 
 
-#---------------------TEST AND EVAL -------------#
+
+
+#2. TEST-LOOP ON TEST-SET
 no_test_correct = 0 
 no_test_false = 0
 no_test_mean_correct = 0 
