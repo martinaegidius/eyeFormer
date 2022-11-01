@@ -296,12 +296,13 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-OVERFIT = False
+OVERFIT = True
 NUM_IN_OVERFIT = 4
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
 EPOCHS = 1000
+VAL_PERC = 0.25 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -415,6 +416,20 @@ testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 overfitSet = torch.utils.data.Subset(train,torch.randint(0,len(train),(NUM_IN_OVERFIT,1)))
 oTrainLoader = DataLoader(overfitSet,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 
+""" Unused section for making a train/val-split on overfit-set
+train_idx = torch.randint(0,len(train),(NUM_IN_OVERFIT,1))
+val_idx = torch.arange(0,len(train)).reshape(len(train),1)
+mask = [i not in train_idx for i in val_idx] #remove entries in train_idx from val_idx
+val_idx = val_idx[mask] #remask
+
+overfitSet = torch.utils.data.Subset(train,train_idx)
+overfitValSet = torch.utils.data.Subset(train,val_idx)
+oTrainLoader = DataLoader(overfitSet,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
+oValLoader = DataLoader(overfitSet,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
+
+"""
+
+
 #check class-balance (only necessary for finding appropriate seed ONCE): 
 CHECK = False
 if CHECK:
@@ -513,7 +528,7 @@ class eyeFormer_baseline(nn.Module):
             
            
             
-        
+
 
 class EncoderBlock(nn.Module):
         
@@ -524,7 +539,7 @@ class EncoderBlock(nn.Module):
         dim_feedforward - Dimensionality of the hidden layer in the MLP
         dropout - Dropout probability to use in the dropout layers
     """         
-    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.0):
+    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.1):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(input_dim,num_heads,dropout,batch_first=True)
         
@@ -566,7 +581,7 @@ class TransformerEncoder(nn.Module):
      
 class PositionalEncoding(nn.Module):
     ###Probably change max_len of pos-encoding
-    def __init__(self,d_model,dropout = 0.0,max_len = 33):
+    def __init__(self,d_model,dropout = 0.1,max_len = 33):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         position = torch.arange(max_len).unsqueeze(1)
@@ -659,7 +674,7 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=0.33) #default: mean and beta=1.0
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
@@ -789,7 +804,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     epochValLoss = val_loss/val_counter
     print("complete over-epoch val loss: ",epochValLoss)   
     epochValAcc = correct_val_count/val_counter
-    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc
+    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc,trainloader,valloader
 
 
 
@@ -806,7 +821,7 @@ for epoch in range(EPOCHS):
     try:
         print("EPOCH {}:".format(epoch_number+1))    
         #epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
-        epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc = train_one_epoch_w_val(model,loss_fn,train,overfitSet,overfit=OVERFIT,negative_print=False)
+        epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc,split_trainloader,split_valloader = train_one_epoch_w_val(model,loss_fn,train,overfitSet,overfit=OVERFIT,negative_print=False,val_perc=VAL_PERC)
         print("epoch loss {}".format(epochLoss))
         print("epoch val loss {}".format(valLoss))
         print("epoch val acc {}".format(valAcc))
@@ -869,9 +884,15 @@ h6.remove()
 #1. TEST-LOOP ON TRAIN-SET
 trainsettestLosses = []
 
-#eval on overfit-set
-meanModel = get_mean_model(oTrainLoader)
-medianModel = get_median_model(oTrainLoader)
+#eval on TRAIN SET 
+if OVERFIT:
+    meanModel = get_mean_model(oTrainLoader)
+    medianModel = get_median_model(oTrainLoader)
+
+else: 
+    meanModel = get_mean_model(split_trainloader)
+    medianModel = get_median_model(split_trainloader)
+
 model.train(False)
 if(OVERFIT):
     print("Evaluating on first {} instances".format(len(overfitSet)))
@@ -880,8 +901,8 @@ if(OVERFIT):
     no_overfit_false = 0
     no_mean_correct = 0
     no_mean_false = 0
-    meanModel = torch.zeros(1,4)
     overfit_save_struct = []
+    
     
     with torch.no_grad():
         for i, data in enumerate(oTrainLoader):
@@ -905,18 +926,54 @@ if(OVERFIT):
             
             print("IOU: ",IOU)
             
-            accScores = pascalACC(output,target)
+            accScores = pascalACC(meanModel,target)
             no_mean_correct += accScores[0]
             no_mean_false += accScores[1]
-            
-            
-            
             
     print("Overfitting evaluation finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
-
+else:
+    print("Evaluating on first {} instances".format(len(split_trainloader)))
+    
+    no_train_correct = 0
+    no_train_false = 0
+    no_mean_correct = 0
+    no_mean_false = 0
+    train_save_struct = []
+    
+    with torch.no_grad():
+        for i, data in enumerate(split_trainloader):
+            signal = data["signal"]
+            target = data["target"]
+            mask = data["mask"]
+            size = data["size"]
+            name = data["file"]
+            output = model(signal,mask)
+            batchloss = loss_fn(target,output)
+            accScores = pascalACC(output,target)
+            no_train_correct += accScores[0]
+            no_train_false += accScores[1]
+            IOU = accScores[2]
+            if(accScores[0]==1):
+                train_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            else:
+                train_save_struct.append([name,str(0),accScores[2],target,output,size])
+            print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
+            trainsettestLosses.append(batchloss)
+            
+            #print("IOU: ",IOU)
+            
+            accScores = pascalACC(meanModel,target)
+            no_mean_correct += accScores[0]
+            no_mean_false += accScores[1]
+                
+            
+    print("General training evaluation finished. \nTransformer accuracy with PASCAL-criterium on training-data used: {}/{}, percentage: {}".format(no_train_correct,no_train_false+no_train_correct,no_train_correct/(no_train_false+no_train_correct)))    
+    print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    torch.save(train_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
+    
 
 
 
@@ -930,8 +987,8 @@ no_test_median_false = 0
 testlosses = []
 correct_false_list = []
 
-meanModel = get_mean_model(oTrainLoader)
-medianModel = get_median_model(oTrainLoader)
+# meanModel = get_mean_model(oTrainLoader)
+# medianModel = get_median_model(oTrainLoader)
 
 with torch.no_grad():
     running_loss = 0 
@@ -997,28 +1054,32 @@ def save_fig(root_dir,classString,pltobj,title=None,mode=None):
 
 
 import matplotlib.pyplot as plt
-epochPlot = [x+1 for x in range(len(epochLossLI))]
-plt.plot(epochPlot,epochLossLI)
-if EPOCHS > 100:
-    xticks = range(1,len(epochLossLI)+1,10)
+plt.plot(epochLossLI)
+plt.plot(epochValLossLI)
+if EPOCHS > 500:
+    xticks = range(0,len(epochLossLI),100)
+elif EPOCHS >100:
+    xticks = range(0,len(epochLossLI),10)
 else:
-    xticks = range(1,len(epochLossLI)+1)
+    xticks = range(0,len(epochLossLI))
     
 plt.xticks(xticks)
-plt.ylabel("L1-LOSS") 
+plt.ylabel("L1-LOSS,beta=0.33") 
 plt.xlabel("Epoch")
+plt.legend(["Training loss","Validation loss"])
+if not OVERFIT:
+    plt.suptitle("Transformer training error {} images, validation {}".format(math.floor(len(train)*(1-VAL_PERC)),math.ceil(len(train)*VAL_PERC)))
+    if SAVEFIGS:
+        save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
+    #plt.savefig(root_dir+"{}.jpg".format(classString))
+
 if(OVERFIT):
-    plt.title("Train-error on constant subset of {} images".format(len(overfitSet)))
+    plt.title("Train-error on constant subset of {} training images, {} val images".format(math.floor(NUM_IN_OVERFIT*(1-VAL_PERC)),math.ceil(NUM_IN_OVERFIT*VAL_PERC)))
     if SAVEFIGS:
         save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
     #plt.savefig(root_dir+"{}-image.jpg")
     
 
-else: 
-    plt.title("Train-error on {}[{}] images".format(classString,len(train)))
-    if SAVEFIGS:
-        save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
-    #plt.savefig(root_dir+"{}.jpg".format(classString))
-
+    
     
 
