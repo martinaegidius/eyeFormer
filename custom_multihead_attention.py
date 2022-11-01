@@ -297,12 +297,12 @@ torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 4
+NUM_IN_OVERFIT = 2
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
-EPOCHS = 1000
-VAL_PERC = 0.25 #length of validation set 
+EPOCHS = 2000
+VAL_PERC = 0.5 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -468,7 +468,7 @@ and build
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.1):
+        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.0):
             self.d_model = input_dim
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
@@ -539,7 +539,7 @@ class EncoderBlock(nn.Module):
         dim_feedforward - Dimensionality of the hidden layer in the MLP
         dropout - Dropout probability to use in the dropout layers
     """         
-    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.1):
+    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.0):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(input_dim,num_heads,dropout,batch_first=True)
         
@@ -674,7 +674,7 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=0.33) #default: mean and beta=1.0
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
@@ -759,6 +759,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
+        
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
         #print("Goal is: \n",data["target"])
@@ -885,17 +886,12 @@ h6.remove()
 trainsettestLosses = []
 
 #eval on TRAIN SET 
-if OVERFIT:
-    meanModel = get_mean_model(oTrainLoader)
-    medianModel = get_median_model(oTrainLoader)
-
-else: 
-    meanModel = get_mean_model(split_trainloader)
-    medianModel = get_median_model(split_trainloader)
+meanModel = get_mean_model(split_trainloader)
+medianModel = get_median_model(split_trainloader)
 
 model.train(False)
 if(OVERFIT):
-    print("Evaluating on first {} instances".format(len(overfitSet)))
+    print("Evaluating on first {} instances".format(len(split_trainloader)))
     
     no_overfit_correct = 0
     no_overfit_false = 0
@@ -903,39 +899,37 @@ if(OVERFIT):
     no_mean_false = 0
     overfit_save_struct = []
     
-    
-    with torch.no_grad():
-        for i, data in enumerate(oTrainLoader):
-            signal = data["signal"]
-            target = data["target"]
-            mask = data["mask"]
-            size = data["size"]
-            name = data["file"]
-            output = model(signal,mask)
-            batchloss = loss_fn(target,output)
-            accScores = pascalACC(output,target)
-            no_overfit_correct += accScores[0]
-            no_overfit_false += accScores[1]
-            IOU = accScores[2]
-            if(accScores[0]==1):
-                overfit_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-            else:
-                overfit_save_struct.append([name,str(0),accScores[2],target,output,size])
-            print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
-            trainsettestLosses.append(batchloss)
-            
-            print("IOU: ",IOU)
-            
-            accScores = pascalACC(meanModel,target)
-            no_mean_correct += accScores[0]
-            no_mean_false += accScores[1]
-            
+    for i, data in enumerate(split_trainloader):
+        signal = data["signal"]
+        target = data["target"]
+        mask = data["mask"]
+        size = data["size"]
+        name = data["file"]
+        output = model(signal,mask)
+        batchloss = loss_fn(target,output)
+        accScores = pascalACC(output,target)
+        no_overfit_correct += accScores[0]
+        no_overfit_false += accScores[1]
+        IOU = accScores[2]
+        if(accScores[0]==1):
+            overfit_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+        else:
+            overfit_save_struct.append([name,str(0),accScores[2],target,output,size])
+        print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n IOU: {}".format(data["file"],data["target"],output,batchloss,IOU))
+        trainsettestLosses.append(batchloss)
+        
+       
+        
+        accScores = pascalACC(meanModel,target)
+        no_mean_correct += accScores[0]
+        no_mean_false += accScores[1]
+        
     print("Overfitting evaluation finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
 else:
-    print("Evaluating on first {} instances".format(len(split_trainloader)))
+    print("SECOND LOOP Evaluating on first {} instances".format(len(split_trainloader)))
     
     no_train_correct = 0
     no_train_false = 0
