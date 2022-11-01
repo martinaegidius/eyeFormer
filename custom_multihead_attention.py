@@ -297,10 +297,11 @@ torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 4
+NUM_IN_OVERFIT = 12
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
+EPOCHS = 1000
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -719,7 +720,6 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
 
 
 epoch_number = 0
-EPOCHS = 1000
 epochLoss = 0 
 model.train(True)
 epochLossLI = []
@@ -829,7 +829,7 @@ if(OVERFIT):
             
     print("Overfitting evaluation finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
-    torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"overfit_test_results.pth")
+    torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
 
 
@@ -882,6 +882,9 @@ with torch.no_grad():
         if i!=0 and i%100==0:
             print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
             running_loss = 0 
+            
+torch.save(correct_false_list,root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
+    
 
 testmeanAcc = no_test_mean_correct/(no_test_mean_false+no_test_mean_correct)
 testmedianAcc = no_test_median_correct/(no_test_median_false+no_test_median_correct)
