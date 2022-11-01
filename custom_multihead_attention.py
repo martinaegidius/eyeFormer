@@ -296,12 +296,12 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 torch.manual_seed(3)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-OVERFIT = True
-NUM_IN_OVERFIT = 12
+OVERFIT = False
+NUM_IN_OVERFIT = 4
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
-EPOCHS = 100
+EPOCHS = 1000
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -732,7 +732,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         train = train #a bit clumsy, may be refactored
     
     torch.manual_seed(2)
-    test_split,val_split = torch.utils.data.random_split(train,[int((1-val_perc)*len(train)),int(val_perc*len(train))])
+    test_split,val_split = torch.utils.data.random_split(train,[math.ceil((1-val_perc)*len(train)),math.floor(val_perc*len(train))])
     
     trainloader = DataLoader(test_split,batch_size=BATCH_SZ,num_workers=0,shuffle=True)
     valloader = DataLoader(val_split,batch_size=BATCH_SZ,num_workers=0,shuffle=True)
