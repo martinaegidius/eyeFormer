@@ -153,7 +153,6 @@ def plot_train_set(data,root_dir,classOC=0):
     for entry in range(NSAMPLES):
         filename = data[entry][0][0]
         im = plt.imread(root_dir+filename)
-        ax[row,col].tick_params(left = False, right = False , labelleft = False ,labelbottom = False, bottom = False)
         target,preds = bbox_for_plot(data[entry])
         mean_box = single_format_bbox(meanBox, data[entry])
         median_box = single_format_bbox(medianBox,data[entry])
@@ -166,6 +165,7 @@ def plot_train_set(data,root_dir,classOC=0):
             col = 0 
         print("Col: ",col,"Row:",row)
         ax[row,col].imshow(im)
+        ax[row,col].tick_params(left = False, right = False , labelleft = False ,labelbottom = False, bottom = False)
         ax[row,col].add_patch(rectT)
         ax[row,col].add_patch(rectP)
         ax[row,col].add_patch(rectM)
@@ -280,7 +280,7 @@ def plot_test_set(data,root_dir,classOC=0,meanBox=None,medianBox=None,mode=None)
     plt.rcParams['legend.handlelength'] = 1
     plt.rcParams['legend.handleheight'] = 1.125
     fig.legend(legend_tuple,legend_name_tuple,loc="upper center",ncol=legend_ncol,framealpha=0.0,bbox_to_anchor=(0.5, 0.95))
-    fig.suptitle("Predictions on subset of testset")
+    fig.suptitle("Predictions on subset of testset with mode: "+mode)
     plt.show()
     return None
     
@@ -296,6 +296,8 @@ plot_train_set(testOnTrain,impath)
 mean = mean_model(testOnTrain)
 median = median_model(testOnTrain)
 plot_test_set(testdata,impath,meanBox=mean,medianBox=median,mode="success")
+plot_test_set(testdata,impath,meanBox=mean,medianBox=median,mode="failure")
+
 
 
 

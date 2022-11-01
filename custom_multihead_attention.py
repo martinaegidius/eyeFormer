@@ -301,7 +301,7 @@ NUM_IN_OVERFIT = 12
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
-EPOCHS = 1000
+EPOCHS = 100
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -677,6 +677,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         trainloader = oTrainLoader
     else: 
         trainloader = trainloader #a bit clumsy, may be refactored
+        
     
     for i, data in enumerate(trainloader):
         counter += 1
@@ -715,29 +716,113 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         
     epochLoss = running_loss/counter 
     epochAcc = correct_count/len(trainloader.dataset)
-    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc
+    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model
+
+
+def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,negative_print=False) -> float: 
+    running_loss = 0.
+    #src_mask = generate_square_subsequent_mask(32).to(device)
+    correct_count = 0
+    false_count = 0
+    counter = 0
+    
+    if(overfit==True):
+        train = oTrain
+    else: 
+        train = train #a bit clumsy, may be refactored
+    
+    torch.manual_seed(2)
+    test_split,val_split = torch.utils.data.random_split(train,[int((1-val_perc)*len(train)),int(val_perc*len(train))])
+    
+    trainloader = DataLoader(test_split,batch_size=BATCH_SZ,num_workers=0,shuffle=True)
+    valloader = DataLoader(val_split,batch_size=BATCH_SZ,num_workers=0,shuffle=True)
+    
+    
+    model.train()
+    for i, data in enumerate(trainloader):
+        counter += 1
+        optimizer.zero_grad() #reset grads
+        target = data["target"]
+        mask = data["mask"]
+        #print("Mask:\n",data["mask"])
+        #print("Input: \n",data["signal"])
+        #print("Goal is: \n",data["target"])
+        outputs = model(data["signal"],mask)
+        
+        
+        #PASCAL CRITERIUM
+        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        correct_count += noTrue
+        false_count += noFalse
+        
+        
+        loss = loss_fn(outputs,target)
+        loss.backward()
+        running_loss += loss.item() #is complete EPOCHLOSS
+        nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
+        optimizer.step()
+        
+    model.eval()
+    val_counter = 0
+    false_val_count = 0
+    correct_val_count = 0
+    val_loss = 0
+    for i, data in enumerate(valloader):
+        val_counter += 1
+        target = data["target"]
+        mask = data["mask"]
+        outputs = model(data["signal"],mask)
+        
+        #PASCAL CRITERIUM
+        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        correct_val_count += noTrue
+        false_val_count += noFalse
+        
+        
+        loss = loss_fn(outputs,target)
+        val_loss += loss.item() #is complete EPOCHLOSS
+        
+       
+        
+    epochLoss = running_loss/counter 
+    epochAcc = correct_count/len(trainloader.dataset)
+    epochValLoss = val_loss/val_counter
+    print("complete over-epoch val loss: ",epochValLoss)   
+    epochValAcc = correct_val_count/val_counter
+    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc
 
 
 
+#def train_number_of_epochs(EPOCHS,model,loss,trainloader,oTrainLoader,overfit=False,negative_print=False):
 epoch_number = 0
 epochLoss = 0 
-model.train(True)
 epochLossLI = []
 epochAccLI = []
+epochValLossLI = []
+epochValAccLI = []
 torch.autograd.set_detect_anomaly(True)
-
 for epoch in range(EPOCHS):
     model.train(True)
     try:
         print("EPOCH {}:".format(epoch_number+1))    
-        epochLoss, correct_count, false_count,target,signal,mask,epochAcc = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
+        #epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
+        epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc = train_one_epoch_w_val(model,loss_fn,train,overfitSet,overfit=OVERFIT,negative_print=False)
         print("epoch loss {}".format(epochLoss))
+        print("epoch val loss {}".format(valLoss))
+        print("epoch val acc {}".format(valAcc))
+        
         epochLossLI.append(epochLoss)
         epochAccLI.append(epochAcc)
+        epochValAccLI.append(valAcc)
+        epochValLossLI.append(valLoss)
         epoch_number += 1 
     except KeyboardInterrupt:
         print("Manual early stopping triggered")
         break
+    
+ #       return epochLossLI,epochAccLI
+    
+#epochLossLI,epochAccLI = train_number_of_epochs(EPOCHS,model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
 
 def save_epochs(loss,acc,classString,root_dir,mode):
     path = root_dir + classString
