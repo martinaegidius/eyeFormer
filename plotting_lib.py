@@ -156,8 +156,8 @@ def plot_train_set(data,root_dir,classOC=0):
         target,preds = bbox_for_plot(data[entry])
         mean_box = single_format_bbox(meanBox, data[entry])
         median_box = single_format_bbox(medianBox,data[entry])
-        rectT = patches.Rectangle((target[0],target[1]), target[2], target[3], linewidth=1, edgecolor='r', facecolor='none')
-        rectP = patches.Rectangle((preds[0],preds[1]), preds[2], preds[3], linewidth=1, edgecolor='m', facecolor='none')
+        rectT = patches.Rectangle((target[0],target[1]), target[2], target[3], linewidth=2, edgecolor='r', facecolor='none')
+        rectP = patches.Rectangle((preds[0],preds[1]), preds[2], preds[3], linewidth=2, edgecolor='m', facecolor='none')
         rectM = patches.Rectangle((mean_box[0],mean_box[1]),mean_box[2],mean_box[3],linewidth=1,edgecolor='b',facecolor='none')
         rectMed = patches.Rectangle((median_box[0],median_box[1]),median_box[2],median_box[3],linewidth=1,edgecolor='lightcoral',facecolor='none')
         if entry%NCOLS==0 and entry!=0: #NUMBER OF COLS
@@ -239,8 +239,8 @@ def plot_test_set(data,root_dir,classOC=0,meanBox=None,medianBox=None,mode=None)
         if(medianBox!=None):
             median_box = single_format_bbox(medianBox,data[entry])
             rectMed = patches.Rectangle((median_box[0],median_box[1]),median_box[2],median_box[3],linewidth=1,edgecolor='lightcoral',facecolor='none')
-        rectT = patches.Rectangle((target[0],target[1]), target[2], target[3], linewidth=1, edgecolor='r', facecolor='none')
-        rectP = patches.Rectangle((preds[0],preds[1]), preds[2], preds[3], linewidth=1, edgecolor='m', facecolor='none')
+        rectT = patches.Rectangle((target[0],target[1]), target[2], target[3], linewidth=2, edgecolor='r', facecolor='none')
+        rectP = patches.Rectangle((preds[0],preds[1]), preds[2], preds[3], linewidth=2, edgecolor='m', facecolor='none')
         
         if entry%NCOLS==0 and entry!=0: #NUMBER OF COLS
             row += 1 

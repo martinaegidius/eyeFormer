@@ -293,16 +293,16 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
     
 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
-torch.manual_seed(3)
+torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 2
+NUM_IN_OVERFIT = 8
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
 EPOCHS = 2000
-VAL_PERC = 0.5 #length of validation set 
+VAL_PERC = 0.25 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -473,7 +473,7 @@ class eyeFormer_baseline(nn.Module):
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
             self.pos_encoder = PositionalEncoding(self.d_model,dropout)
-            self.encoder = TransformerEncoder(1,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
+            self.encoder = TransformerEncoder(3,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
             #self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
@@ -581,7 +581,7 @@ class TransformerEncoder(nn.Module):
      
 class PositionalEncoding(nn.Module):
     ###Probably change max_len of pos-encoding
-    def __init__(self,d_model,dropout = 0.1,max_len = 33):
+    def __init__(self,d_model,dropout = 0.0,max_len = 33):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         position = torch.arange(max_len).unsqueeze(1)
@@ -674,8 +674,9 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.01) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-loss_fn = nn.SmoothL1Loss(beta=0.33) #default: mean and beta=1.0
+optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
+
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
 dead_neurons_lin2 = []
@@ -720,7 +721,8 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         false_count += noFalse
         
         
-        loss = loss_fn(outputs,target)
+        loss = loss_fn(outputs,target) #L1 LOSS
+        #loss = ops.generalized_box_iou_loss(output,target)
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
@@ -751,7 +753,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     
     trainloader = DataLoader(test_split,batch_size=BATCH_SZ,num_workers=0,shuffle=True)
     valloader = DataLoader(val_split,batch_size=BATCH_SZ,num_workers=0,shuffle=True)
-    
+    loss = 0
     
     model.train()
     for i, data in enumerate(trainloader):
@@ -772,7 +774,8 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         false_count += noFalse
         
         
-        loss = loss_fn(outputs,target)
+        loss = loss_fn(outputs,target) #SMOOTH L1
+        #loss = ops.generalized_box_iou(outputs.to(dtype=torch.float64),target.to(dtype=torch.float64))
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
@@ -795,13 +798,15 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         false_val_count += noFalse
         
         
-        loss = loss_fn(outputs,target)
+        loss = loss_fn(outputs,target) #L1 LOSS
+        #loss = ops.generalized_box_iou_loss(outputs.to(dtype=torch.float32),target.to(dtype=torch.float32))
+        
         val_loss += loss.item() #is complete EPOCHLOSS
         
        
         
     epochLoss = running_loss/counter 
-    epochAcc = correct_count/len(trainloader.dataset)
+    epochAcc = correct_count/len(trainloader)
     epochValLoss = val_loss/val_counter
     print("complete over-epoch val loss: ",epochValLoss)   
     epochValAcc = correct_val_count/val_counter
@@ -826,12 +831,15 @@ for epoch in range(EPOCHS):
         print("epoch loss {}".format(epochLoss))
         print("epoch val loss {}".format(valLoss))
         print("epoch val acc {}".format(valAcc))
-        
+        print("epoch train acc {}".format(epochAcc))
         epochLossLI.append(epochLoss)
         epochAccLI.append(epochAcc)
         epochValAccLI.append(valAcc)
         epochValLossLI.append(valLoss)
         epoch_number += 1 
+        if(epochAcc==1):
+            print("Perfect overfit at epoch {}".format(epoch_number+1))
+        
     except KeyboardInterrupt:
         print("Manual early stopping triggered")
         break
@@ -906,7 +914,9 @@ if(OVERFIT):
         size = data["size"]
         name = data["file"]
         output = model(signal,mask)
-        batchloss = loss_fn(target,output)
+        batchloss = loss_fn(target,output) #L1 LOSS
+       # batchloss = ops.generalized_box_iou_loss(output.to(dtype=torch.float32),target.to(dtype=torch.float32))
+        
         accScores = pascalACC(output,target)
         no_overfit_correct += accScores[0]
         no_overfit_false += accScores[1]
@@ -945,7 +955,8 @@ else:
             size = data["size"]
             name = data["file"]
             output = model(signal,mask)
-            batchloss = loss_fn(target,output)
+            batchloss = loss_fn(target,output) #L1-loss
+           # batchloss = ops.generalized_box_iou_loss(output.to(dtype=torch.float32),target.to(dtype=torch.float32))
             accScores = pascalACC(output,target)
             no_train_correct += accScores[0]
             no_train_false += accScores[1]
@@ -993,7 +1004,8 @@ with torch.no_grad():
         name = data["file"]
         size = data["size"]
         output = model(signal,mask)
-        batchloss = loss_fn(target,output)
+        batchloss = loss_fn(target,output) #L1 Loss
+        #batchloss = ops.generalized_box_iou_loss(output.to(dtype=torch.float32),target.to(dtype=torch.float32))
         running_loss += batchloss.item()
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
@@ -1058,7 +1070,7 @@ else:
     xticks = range(0,len(epochLossLI))
     
 plt.xticks(xticks)
-plt.ylabel("L1-LOSS,beta=0.33") 
+plt.ylabel("giou-LOSS,beta=0.33") 
 plt.xlabel("Epoch")
 plt.legend(["Training loss","Validation loss"])
 if not OVERFIT:
