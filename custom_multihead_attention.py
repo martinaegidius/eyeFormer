@@ -413,7 +413,8 @@ if(GENERATE_DATASET == False):
 trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 #for model overfitting
-overfitSet = torch.utils.data.Subset(train,torch.randint(0,len(train),(NUM_IN_OVERFIT,1)))
+ofIDX = torch.randperm(len(train))[:NUM_IN_OVERFIT].unsqueeze(1) #random permutation, followed by sampling and unsqueezing
+overfitSet = torch.utils.data.Subset(train,ofIDX)
 oTrainLoader = DataLoader(overfitSet,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 
 """ Unused section for making a train/val-split on overfit-set
@@ -674,7 +675,41 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+#=================DEFINE OPTIMIZER ================#
+class NoamOpt:
+    #"Optim wrapper that implements rate."
+    def __init__(self, model_size, factor, warmup, optimizer):
+        self.optimizer = optimizer
+        self._step = 0
+        self.warmup = warmup
+        self.factor = factor
+        self.model_size = model_size
+        self._rate = 0
+        
+    def step(self):
+        "Update parameters and rate"
+        self._step += 1
+        rate = self.rate()
+        for p in self.optimizer.param_groups:
+            p['lr'] = rate
+        self._rate = rate
+        self.optimizer.step()
+        
+    def rate(self, step = None):
+        "Implement `lrate` above"
+        if step is None:
+            step = self._step
+        return self.factor * \
+            (self.model_size ** (-0.5) *
+            min(step ** (-0.5), step * self.warmup ** (-1.5)))
+        
+    def get_std_opt(model):
+        return NoamOpt(model.d_model, 2, 4000,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+###
+
+#optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+model_opt = NoamOpt(model.d_model,1,120,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
@@ -689,6 +724,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
     batchwiseLoss = []
     counter = 0
     
+    
     if(overfit==True):
         trainloader = oTrainLoader
     else: 
@@ -697,7 +733,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
     
     for i, data in enumerate(trainloader):
         counter += 1
-        optimizer.zero_grad() #reset grads
+        model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
         #print("Mask:\n",data["mask"])
@@ -726,7 +762,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
-        optimizer.step()
+        model_opt.step()
         
        
         
@@ -743,6 +779,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     false_count = 0
     counter = 0
     
+    
     if(overfit==True):
         train = oTrain
     else: 
@@ -758,7 +795,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     model.train()
     for i, data in enumerate(trainloader):
         counter += 1
-        optimizer.zero_grad() #reset grads
+        model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
         
@@ -779,7 +816,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
-        optimizer.step()
+        model_opt.step()
         
     model.eval()
     val_counter = 0
