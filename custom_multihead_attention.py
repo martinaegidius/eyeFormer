@@ -300,7 +300,7 @@ OVERFIT = True
 NUM_IN_OVERFIT = 8
 classString = "airplanes"
 SAVEFIGS = False
-BATCH_SZ = 1
+BATCH_SZ = 4
 EPOCHS = 2000
 VAL_PERC = 0.25 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
@@ -898,15 +898,27 @@ save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
 
     
         
-def get_mean_model(trainloader):
+def get_mean_model(trainloader): #NEED TO FIX FOR BATCHES 
     mean_vals = torch.zeros(1,4)
     for i, data in enumerate(trainloader):
         mean_vals += data["target"]
     mean_vals /= len(trainloader)
-    
     return mean_vals
+
+"""experimentary: 
+    def get_mean_model(trainloader): #NOT FUNCTIONAL ATM
+        mean_vals = torch.zeros(1,4)
+        for i, data in enumerate(trainloader):
+            for i in range(data["target"].shape[0]):
+                mean_vals += data["target"][i]
+        mean_vals /= len(trainloader.dataset)
+        print("mean values: ",mean_vals)
+        return mean_vals
+"""
     
-def get_median_model(trainloader):
+
+    
+def get_median_model(trainloader): #NEED TO FIX FOR BATCHES 
     holder_t = torch.zeros(len(trainloader),4)
     for i, data in enumerate(trainloader):
         holder_t[i,:] = data["target"]
