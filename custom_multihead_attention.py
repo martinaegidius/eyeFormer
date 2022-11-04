@@ -300,7 +300,7 @@ OVERFIT = True
 NUM_IN_OVERFIT = 8
 classString = "airplanes"
 SAVEFIGS = False
-BATCH_SZ = 4
+BATCH_SZ = 1
 EPOCHS = 2000
 VAL_PERC = 0.25 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
@@ -608,10 +608,50 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:,:x.size(1),:] #[bs x seq_len x embedding dim]
         return self.dropout(x)
 
+def scaleBackCoords(preds,labels,imdims):
+    """
+    Function for scaling from percentage back to original box-coords. Necessary for correct IOU-calculation. Should work for batches 
+    Input: 
+        percentage-wise preds and labels in format [x0,y0,x1,y1]
+        imdims: [1,2]-tensor holding image-size in format [height,width]
+    returns: 
+        preds, labels in pixel-values 
+        
+    """
+    BSZ = preds.shape[0]
+    tmp_preds = torch.zeros_like(preds)
+    tmp_labels = torch.zeros_like(labels)
+    
+    assert BSZ == labels.shape[0], "zeroth dimension of preds and labels are not the same"
+    for i in range(BSZ):
+        tmp_preds[i,0::2] = preds[i,0::2]*imdims[i,-1] #x 
+        tmp_preds[i,1::2] = preds[i,1::2]*imdims[i,0] #y
+        tmp_labels[i,0::2] = labels[i,0::2]*imdims[i,-1]  
+        tmp_labels[i,1::2] = labels[i,1::2]*imdims[i,0] 
+    return tmp_preds,tmp_labels 
+
+def boxIOU(preds,labels):
+    """
+    Own-implemented batch-solid IOU-calculator. 
+    Returns: tensor, [BS]
+    """
+    BSZ = preds.shape[0]
+    assert BSZ == labels.shape[0], "zeroth dimension of preds and labels are not the same"
+    IOU = torch.zeros(BSZ)
+    for i in range(BSZ):
+        A_target = (labels[i,2]-labels[i,0])*(labels[i,3]-labels[i,1]) #(x2-x1)*(y2-y1)
+        A_pred = (preds[i,2]-preds[i,0])*(preds[i,-1]-preds[i,1]) #(x2-x1)*(y2-y1)
+        U_width = torch.min(labels[i,2],preds[i,2]) - torch.max(labels[i,0],preds[i,0]) #width is min(lx2,px2)-(max(lx0,px0))
+        U_height = torch.min(labels[i,3],preds[i,3]) - torch.max(labels[i,1],preds[i,1])  
+        A_U = U_width * U_height
+        IOU[i] = A_U / (A_target+A_pred-A_U)
+    return IOU      
+    
 def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
     no_corr = 0 
     no_false = 0
     IOU_li = []
+    
     if preds.dim()==1:
         preds = preds.unsqueeze(0)
     if labels.dim()==1:
@@ -736,6 +776,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
+        imsz = data["size"]
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
         #print("Goal is: \n",data["target"])
@@ -752,7 +793,8 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
+        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
         correct_count += noTrue
         false_count += noFalse
         
@@ -798,6 +840,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
+        imsz = data["size"]
         
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
@@ -806,7 +849,13 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
+        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
+        print("\nScaled pascalACC returns:\n",pascalACC(sOutputs,sTargets))
+        print("\nOriginal pascalACC returns:\n",pascalACC(outputs,target))
+        
+        print("\ngetIOU function returns:\n",getIOU(outputs,target,sensitivity=0.5))
+        
         correct_count += noTrue
         false_count += noFalse
         
@@ -828,9 +877,11 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         target = data["target"]
         mask = data["mask"]
         outputs = model(data["signal"],mask)
+        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
+        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        #noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
         correct_val_count += noTrue
         false_val_count += noFalse
         
@@ -1109,6 +1160,7 @@ def save_fig(root_dir,classString,pltobj,title=None,mode=None):
 
 
 import matplotlib.pyplot as plt
+plt.figure(1337)
 plt.plot(epochLossLI)
 plt.plot(epochValLossLI)
 if EPOCHS > 500:
