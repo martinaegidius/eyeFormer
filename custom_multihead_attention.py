@@ -310,6 +310,8 @@ DROPOUT = 0.1
 LR_FACTOR = 1
 NUM_WARMUP = 300
 BETA = 1
+NLAYERS = 3
+NHEADS = 2
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -477,12 +479,12 @@ and build
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.0):
+        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.0,n_layers = 3, num_heads = 1):
             self.d_model = input_dim
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
             self.pos_encoder = PositionalEncoding(self.d_model,dropout=dropout)
-            self.encoder = TransformerEncoder(3,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
+            self.encoder = TransformerEncoder(num_layers=n_layers,input_dim=self.d_model,seq_len=32,num_heads=num_heads,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
             #self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
@@ -693,7 +695,7 @@ def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
 
 
 ###-----------------------------------MODEL TRAINING----------------------------------
-model = eyeFormer_baseline(dropout=DROPOUT)
+model = eyeFormer_baseline(dropout=DROPOUT,n_layers=NLAYERS,num_heads=NHEADS)
 activation = {}
 def getActivation(name):
     def hook(model,input,output):
@@ -776,7 +778,7 @@ class NoamOpt:
 #optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 model_opt = NoamOpt(model.d_model,LR_FACTOR,NUM_WARMUP,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
 loss_fn = nn.SmoothL1Loss(beta=BETA) #default: mean and beta=1.0
-print("Model parameters:\n lrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n VAL-PERC: {}".format(LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,VAL_PERC))
+print("Model parameters:\n lrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n VAL-PERC: {}\n NHEADS: {}\n NLAYERS: {}".format(LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,VAL_PERC,NHEADS,NLAYERS))
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
 dead_neurons_lin2 = []
