@@ -302,7 +302,7 @@ OVERFIT = True
 NUM_IN_OVERFIT = 47
 classString = "airplanes"
 SAVEFIGS = True
-BATCH_SZ = 4
+BATCH_SZ = 2
 EPOCHS = 2000
 VAL_PERC = 0.3 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
@@ -895,7 +895,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         target = data["target"]
         mask = data["mask"]
         outputs = model(data["signal"],mask)
-        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
+        #sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
         noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
         
         #PASCAL CRITERIUM
