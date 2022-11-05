@@ -414,6 +414,7 @@ if(GENERATE_DATASET == False):
 
 trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
+
 #for model overfitting
 ofIDX = torch.randperm(len(train))[:NUM_IN_OVERFIT].unsqueeze(1) #random permutation, followed by sampling and unsqueezing
 overfitSet = torch.utils.data.Subset(train,ofIDX)
@@ -795,7 +796,6 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
-        imsz = data["size"]
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
         #print("Goal is: \n",data["target"])
@@ -812,8 +812,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #PASCAL CRITERIUM
-        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
-        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
+        noTrue,noFalse,_ = pascalACC(outputs,target)
         correct_count += noTrue
         false_count += noFalse
         
@@ -859,7 +858,6 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
-        imsz = data["size"]
         
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
@@ -868,8 +866,8 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         
         
         #PASCAL CRITERIUM
-        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz) #with rescaling. Proved to be uneccesarry
-        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
+        #sOutputs, sTargets = scaleBackCoords(outputs, target, imsz) #with rescaling. Proved to be uneccesarry
+        noTrue,noFalse,_ = pascalACC(outputs,target)
         #print("\nScaled pascalACC returns:\n",pascalACC(sOutputs,sTargets))
         #print("\nOriginal pascalACC returns:\n",pascalACC(outputs,target))
         #print("\ngetIOU function returns:\n",getIOU(outputs,target,sensitivity=0.5))
@@ -886,17 +884,17 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         model_opt.step()
         
     model.eval()
-    val_counter = 0
+   
     false_val_count = 0
     correct_val_count = 0
     val_loss = 0
     for i, data in enumerate(valloader):
-        val_counter += 1
+        
         target = data["target"]
         mask = data["mask"]
         outputs = model(data["signal"],mask)
         #sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
-        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
+        noTrue,noFalse,_ = pascalACC(outputs,target)
         
         #PASCAL CRITERIUM
         #noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
@@ -912,10 +910,10 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
        
         
     epochLoss = running_loss/counter 
-    epochAcc = correct_count/len(trainloader)
-    epochValLoss = val_loss/val_counter
+    epochAcc = correct_count/len(trainloader.dataset)
+    epochValLoss = val_loss/len(valloader.dataset)
     #print("complete over-epoch val loss: ",epochValLoss)   
-    epochValAcc = correct_val_count/val_counter
+    epochValAcc = correct_val_count/len(valloader.dataset)
     return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc,trainloader,valloader
 
 
@@ -1028,7 +1026,7 @@ medianModel = get_median_model(split_trainloader)
 
 model.train(False)
 if(OVERFIT):
-    print("Evaluating overfit on first {} instances".format(len(split_trainloader)))
+    print("Evaluating overfit on first {} instances".format(len(split_trainloader.dataset)))
     
     no_overfit_correct = 0
     no_overfit_false = 0
@@ -1073,7 +1071,7 @@ if(OVERFIT):
         no_med_correct += accScores[0]
         no_med_false += accScores[1]
         
-    print("---------------------------EVAL on ALL {} overfit-train-images---------------------------".format(len(split_trainloader)))    
+    print("---------------------------EVAL on ALL {} overfit-train-images---------------------------".format(len(split_trainloader.dataset)))    
     print("\nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
@@ -1082,8 +1080,7 @@ if(OVERFIT):
     
     
 else:
-    print("SECOND LOOP Evaluating on first {} instances".format(len(split_trainloader)))
-    
+    print("SECOND LOOP Evaluating on first {} instances".format(len(split_trainloader.dataset)))
     no_train_correct = 0
     no_train_false = 0
     no_mean_correct = 0
@@ -1129,7 +1126,7 @@ else:
             
                 
             
-    print("---------------EVAL on ALL {} training-images---------------".format(len(split_trainloader)))
+    print("---------------EVAL on ALL {} training-images---------------".format(len(split_trainloader.dataset)))
     print("\n\nTransformer accuracy with PASCAL-criterium on training-data used: {}/{}, percentage: {}".format(no_train_correct,no_train_false+no_train_correct,no_train_correct/(no_train_false+no_train_correct)))    
     print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
@@ -1198,7 +1195,7 @@ with torch.no_grad():
 testmeanAcc = no_test_mean_correct/(no_test_mean_false+no_test_mean_correct)
 testmedianAcc = no_test_median_correct/(no_test_median_false+no_test_median_correct)
 
-print("---------------EVAL on ALL {} test-images---------------".format(len(testloader)))
+print("---------------EVAL on ALL {} test-images---------------".format(len(testloader.dataset)))
 print("\nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
 print("\nMean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
 print("\nMedian model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_median_correct,no_test_median_false+no_test_median_correct,testmedianAcc))    
