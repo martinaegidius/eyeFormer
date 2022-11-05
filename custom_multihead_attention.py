@@ -648,6 +648,10 @@ def boxIOU(preds,labels):
     return IOU      
     
 def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
+    """
+    Function for calculating the accuracy between a batch of predictions and corresponding batch of targets. 
+    Returns: number of correct predictions in batch, number of false predictions in batch and a list of IOU-scores for the batch
+    """
     no_corr = 0 
     no_false = 0
     IOU_li = []
