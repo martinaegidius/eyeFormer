@@ -299,12 +299,12 @@ torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 16
+NUM_IN_OVERFIT = 47
 classString = "airplanes"
-SAVEFIGS = False
-BATCH_SZ = 1
-EPOCHS = 250
-VAL_PERC = 0.25 #length of validation set 
+SAVEFIGS = True
+BATCH_SZ = 4
+EPOCHS = 2000
+VAL_PERC = 0.3 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -768,7 +768,7 @@ class NoamOpt:
 ###
 
 #optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-model_opt = NoamOpt(model.d_model,0.8,120,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+model_opt = NoamOpt(model.d_model,1,300,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
 
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 
