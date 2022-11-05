@@ -15,6 +15,8 @@ import numpy as np
 from torchvision import transforms, ops
 import math
 from sklearn.model_selection import KFold
+from tqdm import tqdm
+
 
 class AirplanesBoatsDataset(Dataset):
     def __init__(self,pascalobj,root_dir,classes,transform=None):
@@ -296,13 +298,13 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-OVERFIT = True
+OVERFIT = False
 NUM_IN_OVERFIT = 8
 classString = "airplanes"
 SAVEFIGS = False
 BATCH_SZ = 1
-EPOCHS = 2000
-VAL_PERC = 0.25 #length of validation set 
+EPOCHS = 1000
+VAL_PERC = 0.3 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -413,7 +415,8 @@ if(GENERATE_DATASET == False):
 trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 #for model overfitting
-overfitSet = torch.utils.data.Subset(train,torch.randint(0,len(train),(NUM_IN_OVERFIT,1)))
+ofIDX = torch.randperm(len(train))[:NUM_IN_OVERFIT].unsqueeze(1) #random permutation, followed by sampling and unsqueezing
+overfitSet = torch.utils.data.Subset(train,ofIDX)
 oTrainLoader = DataLoader(overfitSet,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 
 """ Unused section for making a train/val-split on overfit-set
@@ -607,23 +610,81 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:,:x.size(1),:] #[bs x seq_len x embedding dim]
         return self.dropout(x)
 
+def scaleBackCoords(preds,labels,imdims):
+    """
+    Function for scaling from percentage back to original box-coords. Necessary for correct IOU-calculation. Should work for batches 
+    Input: 
+        percentage-wise preds and labels in format [x0,y0,x1,y1]
+        imdims: [1,2]-tensor holding image-size in format [height,width]
+    returns: 
+        preds, labels in pixel-values 
+        
+    """
+    BSZ = preds.shape[0]
+    tmp_preds = torch.zeros_like(preds)
+    tmp_labels = torch.zeros_like(labels)
+    
+    assert BSZ == labels.shape[0], "zeroth dimension of preds and labels are not the same"
+    for i in range(BSZ):
+        tmp_preds[i,0::2] = preds[i,0::2]*imdims[i,-1] #x 
+        tmp_preds[i,1::2] = preds[i,1::2]*imdims[i,0] #y
+        tmp_labels[i,0::2] = labels[i,0::2]*imdims[i,-1]  
+        tmp_labels[i,1::2] = labels[i,1::2]*imdims[i,0] 
+    return tmp_preds,tmp_labels 
+
+def boxIOU(preds,labels):
+    """
+    Own-implemented batch-solid IOU-calculator. 
+    Returns: tensor, [BS]
+    """
+    BSZ = preds.shape[0]
+    assert BSZ == labels.shape[0], "zeroth dimension of preds and labels are not the same"
+    IOU = torch.zeros(BSZ)
+    for i in range(BSZ):
+        A_target = (labels[i,2]-labels[i,0])*(labels[i,3]-labels[i,1]) #(x2-x1)*(y2-y1)
+        A_pred = (preds[i,2]-preds[i,0])*(preds[i,-1]-preds[i,1]) #(x2-x1)*(y2-y1)
+        U_width = torch.min(labels[i,2],preds[i,2]) - torch.max(labels[i,0],preds[i,0]) #width is min(lx2,px2)-(max(lx0,px0))
+        U_height = torch.min(labels[i,3],preds[i,3]) - torch.max(labels[i,1],preds[i,1])  
+        A_U = U_width * U_height
+        IOU[i] = A_U / (A_target+A_pred-A_U)
+    return IOU      
+    
 def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
+    """
+    Function for calculating the accuracy between a batch of predictions and corresponding batch of targets. 
+    Returns: number of correct predictions in batch, number of false predictions in batch and a list of IOU-scores for the batch
+    """
+    
+    BSZ = preds.shape[0]
+    assert BSZ == labels.shape[0],"Batch-size dimensions between target and tensor not in corresondance!"
+    
     no_corr = 0 
     no_false = 0
     IOU_li = []
+    
     if preds.dim()==1:
         preds = preds.unsqueeze(0)
     if labels.dim()==1:
         labels = labels.unsqueeze(0)
-    for i in range(preds.shape[0]): #get pascal-criterium accuraccy
-        IOU = ops.box_iou(preds,labels) #outputs: Nx4, data["target"]: Mx4
-        IOU_li.append(IOU)
+        
+    #no loop approach: 
+        #may be more effective for small batches. But only the diagonal of IOU_tmp is of interest for you - thus many wasted calculations
+    #IOU_tmp = ops.box_iou(preds,labels) #calculates pairwise 
+    #print(torch.diagonal(IOU_tmp))
+    
+    for i in range(BSZ): #get pascal-criterium accuraccy
+        pred_tmp = preds[i,:].unsqueeze(0)
+        label_tmp = labels[i,:].unsqueeze(0)
+        IOU = ops.box_iou(pred_tmp,label_tmp)
+        IOU_li.append(IOU.item())
         if(IOU>0.5):
             no_corr += 1
         else:
             no_false += 1
 
     return no_corr,no_false,IOU_li
+
+
 
 ###-----------------------------------MODEL TRAINING----------------------------------
 model = eyeFormer_baseline()
@@ -674,7 +735,41 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 
 #model.switch_debug()
 
-optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+#=================DEFINE OPTIMIZER ================#
+class NoamOpt:
+    #"Optim wrapper that implements rate."
+    def __init__(self, model_size, factor, warmup, optimizer):
+        self.optimizer = optimizer
+        self._step = 0
+        self.warmup = warmup
+        self.factor = factor
+        self.model_size = model_size
+        self._rate = 0
+        
+    def step(self):
+        "Update parameters and rate"
+        self._step += 1
+        rate = self.rate()
+        for p in self.optimizer.param_groups:
+            p['lr'] = rate
+        self._rate = rate
+        self.optimizer.step()
+        
+    def rate(self, step = None):
+        "Implement `lrate` above"
+        if step is None:
+            step = self._step
+        return self.factor * \
+            (self.model_size ** (-0.5) *
+            min(step ** (-0.5), step * self.warmup ** (-1.5)))
+        
+    def get_std_opt(model):
+        return NoamOpt(model.d_model, 2, 4000,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+###
+
+#optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
+model_opt = NoamOpt(model.d_model,1,120,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
@@ -686,8 +781,8 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
     #src_mask = generate_square_subsequent_mask(32).to(device)
     correct_count = 0
     false_count = 0
-    batchwiseLoss = []
     counter = 0
+    
     
     if(overfit==True):
         trainloader = oTrainLoader
@@ -697,9 +792,10 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
     
     for i, data in enumerate(trainloader):
         counter += 1
-        optimizer.zero_grad() #reset grads
+        model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
+        imsz = data["size"]
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
         #print("Goal is: \n",data["target"])
@@ -716,7 +812,8 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
+        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
         correct_count += noTrue
         false_count += noFalse
         
@@ -726,7 +823,7 @@ def train_one_epoch(model,loss,trainloader,oTrainLoader,overfit=False,negative_p
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
-        optimizer.step()
+        model_opt.step()
         
        
         
@@ -743,6 +840,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     false_count = 0
     counter = 0
     
+    
     if(overfit==True):
         train = oTrain
     else: 
@@ -758,9 +856,10 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     model.train()
     for i, data in enumerate(trainloader):
         counter += 1
-        optimizer.zero_grad() #reset grads
+        model_opt.optimizer.zero_grad() #reset grads
         target = data["target"]
         mask = data["mask"]
+        imsz = data["size"]
         
         #print("Mask:\n",data["mask"])
         #print("Input: \n",data["signal"])
@@ -769,7 +868,12 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz) #with rescaling. Proved to be uneccesarry
+        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
+        #print("\nScaled pascalACC returns:\n",pascalACC(sOutputs,sTargets))
+        #print("\nOriginal pascalACC returns:\n",pascalACC(outputs,target))
+        #print("\ngetIOU function returns:\n",getIOU(outputs,target,sensitivity=0.5))
+        
         correct_count += noTrue
         false_count += noFalse
         
@@ -779,7 +883,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         loss.backward()
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
-        optimizer.step()
+        model_opt.step()
         
     model.eval()
     val_counter = 0
@@ -791,9 +895,11 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         target = data["target"]
         mask = data["mask"]
         outputs = model(data["signal"],mask)
+        sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
+        noTrue,noFalse,_ = pascalACC(sOutputs,sTargets)
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
+        #noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
         correct_val_count += noTrue
         false_val_count += noFalse
         
@@ -808,7 +914,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
     epochLoss = running_loss/counter 
     epochAcc = correct_count/len(trainloader)
     epochValLoss = val_loss/val_counter
-    print("complete over-epoch val loss: ",epochValLoss)   
+    #print("complete over-epoch val loss: ",epochValLoss)   
     epochValAcc = correct_val_count/val_counter
     return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc,trainloader,valloader
 
@@ -822,23 +928,30 @@ epochAccLI = []
 epochValLossLI = []
 epochValAccLI = []
 torch.autograd.set_detect_anomaly(True)
-for epoch in range(EPOCHS):
+
+for epoch in (pbar:=tqdm(range(EPOCHS))):
     model.train(True)
     try:
-        print("EPOCH {}:".format(epoch_number+1))    
+        
         #epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
         epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc,split_trainloader,split_valloader = train_one_epoch_w_val(model,loss_fn,train,overfitSet,overfit=OVERFIT,negative_print=False,val_perc=VAL_PERC)
+        """#without tqdm
+        #print("EPOCH {}:".format(epoch_number+1))    
         print("epoch loss {}".format(epochLoss))
         print("epoch val loss {}".format(valLoss))
         print("epoch val acc {}".format(valAcc))
         print("epoch train acc {}".format(epochAcc))
+        """
+        
+        tmpStr = f" | avg train loss {epochLoss:.2f} | train acc: {epochAcc:.2f} | avg val loss: {valLoss:.2f} | avg val acc: {valAcc:.2f}"
+        pbar.set_postfix_str(tmpStr)
         epochLossLI.append(epochLoss)
         epochAccLI.append(epochAcc)
         epochValAccLI.append(valAcc)
         epochValLossLI.append(valLoss)
         epoch_number += 1 
-        if(epochAcc==1):
-            print("Perfect overfit at epoch {}".format(epoch_number+1))
+        #if(epochAcc==1):
+         #   print("Perfect overfit at epoch {}".format(epoch_number+1))
         
     except KeyboardInterrupt:
         print("Manual early stopping triggered")
@@ -846,7 +959,7 @@ for epoch in range(EPOCHS):
     
  #       return epochLossLI,epochAccLI
     
-#epochLossLI,epochAccLI = train_number_of_epochs(EPOCHS,model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
+ #epochLossLI,epochAccLI = train_number_of_epochs(EPOCHS,model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
 
 def save_epochs(loss,acc,classString,root_dir,mode):
     path = root_dir + classString
@@ -860,24 +973,40 @@ def save_epochs(loss,acc,classString,root_dir,mode):
 save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
 
     
-        
-def get_mean_model(trainloader):
+
+def get_mean_model(trainloader): 
+    """
+    Batch-robust mean-calculator. 
+        Input: dataloader structure of batched or unbatched input
+        ---------------------------------------------------------
+        Output: tensor, shape [1,4]
+    """
     mean_vals = torch.zeros(1,4)
-    for i, data in enumerate(trainloader):
-        mean_vals += data["target"]
-    mean_vals /= len(trainloader)
-    
+    for i, data in enumerate(trainloader): #get batch of training data
+        for j in range(data["target"].shape[0]): #loop over batch-dimension
+            mean_vals += data["target"][j]
+    mean_vals /= len(trainloader.dataset)
     return mean_vals
+
     
-def get_median_model(trainloader):
-    holder_t = torch.zeros(len(trainloader),4)
+
+    
+def get_median_model(trainloader): #NEED TO FIX FOR BATCHES 
+    """
+    Batch-robust median-calculator. 
+        Input: dataloader structure of batched or unbatched input
+        ---------------------------------------------------------
+        Output: tensor, shape [1,4]
+    """
+    holder_t = torch.zeros(len(trainloader.dataset),4)
+    idx_space = 0
     for i, data in enumerate(trainloader):
-        holder_t[i,:] = data["target"]
-    
+        for j in range(data["target"].shape[0]):
+            holder_t[j+idx_space] = data["target"][j]
+        idx_space += j+1 #to ensure support for random and non-equal batch-sizes
     median_t,_ = torch.median(holder_t,dim=0,keepdim=True)
+    #if want debug: return t_holder
     return median_t
-    
-    
     
 #h1.remove()
 h2.remove()   
@@ -899,12 +1028,14 @@ medianModel = get_median_model(split_trainloader)
 
 model.train(False)
 if(OVERFIT):
-    print("Evaluating on first {} instances".format(len(split_trainloader)))
+    print("Evaluating overfit on first {} instances".format(len(split_trainloader)))
     
     no_overfit_correct = 0
     no_overfit_false = 0
     no_mean_correct = 0
     no_mean_false = 0
+    no_med_correct = 0
+    no_med_false = 0
     overfit_save_struct = []
     
     for i, data in enumerate(split_trainloader):
@@ -921,22 +1052,34 @@ if(OVERFIT):
         no_overfit_correct += accScores[0]
         no_overfit_false += accScores[1]
         IOU = accScores[2]
-        if(accScores[0]==1):
-            overfit_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-        else:
-            overfit_save_struct.append([name,str(0),accScores[2],target,output,size])
+        for i in range(len(IOU)):
+            if(IOU[i]>0.5):
+                overfit_save_struct.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            else:
+                overfit_save_struct.append([name,str(0),IOU[i],target,output,size])
         print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n IOU: {}".format(data["file"],data["target"],output,batchloss,IOU))
         trainsettestLosses.append(batchloss)
         
-       
+        #fix meanModel to have as many entrys as target-tensor: 
+        n_in_batch = target.shape[0]
+        meanModel_tmp = meanModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
+        medianModel_tmp = medianModel.repeat(n_in_batch,1)
         
-        accScores = pascalACC(meanModel,target)
+        accScores = pascalACC(meanModel_tmp,target)
         no_mean_correct += accScores[0]
         no_mean_false += accScores[1]
         
-    print("Overfitting evaluation finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
-    print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+        accScores = pascalACC(medianModel_tmp,target)
+        no_med_correct += accScores[0]
+        no_med_false += accScores[1]
+        
+    print("---------------------------EVAL on ALL {} overfit-train-images---------------------------".format(len(split_trainloader)))    
+    print("\nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
+    print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
     torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
+    print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
+    
     
 else:
     print("SECOND LOOP Evaluating on first {} instances".format(len(split_trainloader)))
@@ -945,6 +1088,8 @@ else:
     no_train_false = 0
     no_mean_correct = 0
     no_mean_false = 0
+    no_med_correct = 0
+    no_med_false = 0
     train_save_struct = []
     
     with torch.no_grad():
@@ -961,23 +1106,35 @@ else:
             no_train_correct += accScores[0]
             no_train_false += accScores[1]
             IOU = accScores[2]
-            if(accScores[0]==1):
-                train_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-            else:
-                train_save_struct.append([name,str(0),accScores[2],target,output,size])
+            for i in range(len(IOU)):
+                if(IOU[i]>0.5):
+                    train_save_struct.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+                else:
+                    train_save_struct.append([name,str(0),IOU[i],target,output,size])
             print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
             trainsettestLosses.append(batchloss)
             
             #print("IOU: ",IOU)
+            n_in_batch = target.shape[0]
+            meanModel_tmp = meanModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
+            medianModel_tmp = medianModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
             
-            accScores = pascalACC(meanModel,target)
+            accScores = pascalACC(meanModel_tmp,target)
             no_mean_correct += accScores[0]
             no_mean_false += accScores[1]
+            
+            accScores = pascalACC(medianModel_tmp,target)
+            no_med_correct += accScores[0]
+            no_med_false += accScores[1]
+            
                 
             
-    print("General training evaluation finished. \nTransformer accuracy with PASCAL-criterium on training-data used: {}/{}, percentage: {}".format(no_train_correct,no_train_false+no_train_correct,no_train_correct/(no_train_false+no_train_correct)))    
-    print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    print("---------------EVAL on ALL {} training-images---------------".format(len(split_trainloader)))
+    print("\n\nTransformer accuracy with PASCAL-criterium on training-data used: {}/{}, percentage: {}".format(no_train_correct,no_train_false+no_train_correct,no_train_correct/(no_train_false+no_train_correct)))    
+    print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
     torch.save(train_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
+    print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
 
 
@@ -1009,40 +1166,52 @@ with torch.no_grad():
         running_loss += batchloss.item()
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
-        if(accScores[0]==1):
-            correct_false_list.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-        else:
-            correct_false_list.append([name,str(0),accScores[2],target,output,size])
+        IOU = accScores[2]
+        for i in range(len(IOU)):
+            if(IOU[i]>0.5):
+                correct_false_list.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            else:
+                correct_false_list.append([name,str(0),IOU[i],target,output,size])
             
         
         no_test_correct += accScores[0]        
         no_test_false += accScores[1]
         
-        accScores = pascalACC(meanModel,target)
+        n_in_batch = target.shape[0]
+        meanModel_tmp = meanModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
+        medianModel_tmp = medianModel.repeat(n_in_batch,1)
+        accScores = pascalACC(meanModel_tmp,target)
+        
         no_test_mean_correct += accScores[0]
         no_test_mean_false += accScores[1]
         
-        accScores = pascalACC(medianModel,target)
+        accScores = pascalACC(medianModel_tmp,target)
         no_test_median_correct += accScores[0]
         no_test_median_false += accScores[1]
-        
         
         if i!=0 and i%100==0:
             print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
             running_loss = 0 
             
-torch.save(correct_false_list,root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
-    
+
 
 testmeanAcc = no_test_mean_correct/(no_test_mean_false+no_test_mean_correct)
 testmedianAcc = no_test_median_correct/(no_test_median_false+no_test_median_correct)
-        
-print("Testing finished. \nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
-print("Mean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
-print("Median model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_median_correct,no_test_median_false+no_test_median_correct,testmedianAcc))    
+
+print("---------------EVAL on ALL {} test-images---------------".format(len(testloader)))
+print("\nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
+print("\nMean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
+print("\nMedian model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_median_correct,no_test_median_false+no_test_median_correct,testmedianAcc))    
+torch.save(correct_false_list,root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
+print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
     
 
-def save_fig(root_dir,classString,pltobj,title=None,mode=None):
+
+
+
+print("\n......Entering plotting module......\n")
+
+def write_fig(root_dir,classString,pltobj,title=None,mode=None):
     path = root_dir + classString + "/graphs/"
     if not os.path.exists(path):
         os.mkdir(path)
@@ -1054,12 +1223,14 @@ def save_fig(root_dir,classString,pltobj,title=None,mode=None):
         title = classString+"_"+mode+"_"+timeString+".png"
         del timeString
     pltobj.savefig(path+title)
+    print("Saved figure to ",path+title)
     return None
 
     
 
 
 import matplotlib.pyplot as plt
+plt.figure(1337)
 plt.plot(epochLossLI)
 plt.plot(epochValLossLI)
 if EPOCHS > 500:
@@ -1070,20 +1241,18 @@ else:
     xticks = range(0,len(epochLossLI))
     
 plt.xticks(xticks)
-plt.ylabel("giou-LOSS,beta=0.33") 
+plt.ylabel("Smooth L1-loss, beta=1") 
 plt.xlabel("Epoch")
 plt.legend(["Training loss","Validation loss"])
 if not OVERFIT:
     plt.suptitle("Transformer training error {} images, validation {}".format(math.floor(len(train)*(1-VAL_PERC)),math.ceil(len(train)*VAL_PERC)))
     if SAVEFIGS:
-        save_fig(root_dir,classString,plt,title="with_pos_enc",mode="train")
-    #plt.savefig(root_dir+"{}.jpg".format(classString))
-
+        write_fig(root_dir,classString,plt,title="learning_curve",mode="train")
+    
 if(OVERFIT):
     plt.title("Train-error on constant subset of {} training images, {} val images".format(math.floor(NUM_IN_OVERFIT*(1-VAL_PERC)),math.ceil(NUM_IN_OVERFIT*VAL_PERC)))
     if SAVEFIGS:
-        save_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
-    #plt.savefig(root_dir+"{}-image.jpg")
+        write_fig(root_dir,classString,plt,title="{}_overfitset".format(len(overfitSet)),mode="overfit")
     
 
     
