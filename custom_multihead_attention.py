@@ -298,13 +298,13 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-OVERFIT = True
+OVERFIT = False
 NUM_IN_OVERFIT = 8
 classString = "airplanes"
 SAVEFIGS = False
-BATCH_SZ = 2
-EPOCHS = 100
-VAL_PERC = 0.25 #length of validation set 
+BATCH_SZ = 1
+EPOCHS = 1000
+VAL_PERC = 0.3 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
