@@ -965,9 +965,9 @@ def save_epochs(loss,acc,classString,root_dir,mode):
         os.mkdir(path)
         
     torch.save(loss,path+"/"+classString+"_"+mode+"_losses.pth")
-    print("Saved loss results to ",path+"/"+classString+"_"+mode+"_losses.pth")
+    print("Saved loss results to: ",path+"/"+classString+"_"+mode+"_losses.pth")
     torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
-    print("Saved accuracy results to ",acc,path+"/"+classString+"_"+mode+"_acc.pth")
+    print("Saved accuracy results to: ",path+"/"+classString+"_"+mode+"_acc.pth")
     return
 
 save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
