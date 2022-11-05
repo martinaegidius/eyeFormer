@@ -298,13 +298,13 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-OVERFIT = True
-NUM_IN_OVERFIT = 16
+OVERFIT = False
+NUM_IN_OVERFIT = 8
 classString = "airplanes"
-SAVEFIGS = False
+SAVEFIGS = True
 BATCH_SZ = 1
-EPOCHS = 250
-VAL_PERC = 0.25 #length of validation set 
+EPOCHS = 2000
+VAL_PERC = 0.3 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -471,12 +471,12 @@ and build
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class eyeFormer_baseline(nn.Module):
-        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.0):
+        def __init__(self,input_dim=2,hidden_dim=2048,output_dim=4,dropout=0.1):
             self.d_model = input_dim
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
             self.pos_encoder = PositionalEncoding(self.d_model,dropout)
-            self.encoder = TransformerEncoder(3,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
+            self.encoder = TransformerEncoder(1,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
             #self.transformer_encoder = nn.TransformerEncoder(encoderLayers,num_layers = 1)
@@ -542,7 +542,7 @@ class EncoderBlock(nn.Module):
         dim_feedforward - Dimensionality of the hidden layer in the MLP
         dropout - Dropout probability to use in the dropout layers
     """         
-    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.0):
+    def __init__(self,input_dim,seq_len,num_heads,dim_feedforward,dropout=0.1):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(input_dim,num_heads,dropout,batch_first=True)
         
@@ -584,7 +584,7 @@ class TransformerEncoder(nn.Module):
      
 class PositionalEncoding(nn.Module):
     ###Probably change max_len of pos-encoding
-    def __init__(self,d_model,dropout = 0.0,max_len = 33):
+    def __init__(self,d_model,dropout = 0.1,max_len = 33):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         position = torch.arange(max_len).unsqueeze(1)
@@ -768,7 +768,7 @@ class NoamOpt:
 ###
 
 #optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-model_opt = NoamOpt(model.d_model,0.8,120,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+model_opt = NoamOpt(model.d_model,1,120,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
 
 loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
 

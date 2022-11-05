@@ -174,7 +174,7 @@ def plot_train_set(data,root_dir,classOC=0):
         
         #plt.text(target[0]+target[2]-10,target[1]+10, "IOU", bbox=dict(facecolor='red', alpha=0.5))
         #ax[row,col].text(data[entry][4][0][2].item()-0.1,data[entry][4][0][1].item()+0.1,"IOU:{:.2f}".format(data[entry][2][0].item()),bbox=dict(facecolor='magenta', alpha=0.5),transform=ax[row,col].transAxes)
-        ax[row,col].text(0.02,0.05,"IOU:{:.2f}".format(data[entry][2][0].item()),bbox=dict(facecolor='magenta', alpha=0.75),transform=ax[row,col].transAxes)
+        ax[row,col].text(0.02,0.05,"IOU:{:.2f}".format(data[entry][2]),bbox=dict(facecolor='magenta', alpha=0.75),transform=ax[row,col].transAxes)
         ax[row,col].set_title(filename,fontweight="bold",size=8)
         col += 1
     plt.rcParams['legend.handlelength'] = 1
@@ -273,7 +273,7 @@ def plot_test_set(data,root_dir,classOC=0,meanBox=None,medianBox=None,mode=None)
             del new_legend_tuple,new_legend_name_tuple
             
         
-        ax[row,col].text(0.02,0.05,"IOU:{:.2f}".format(data[entry][2][0].item()),bbox=dict(facecolor='magenta', alpha=0.75),transform=ax[row,col].transAxes)
+        ax[row,col].text(0.02,0.05,"IOU:{:.2f}".format(data[entry][2]),bbox=dict(facecolor='magenta', alpha=0.75),transform=ax[row,col].transAxes)
         ax[row,col].set_title(filename,fontweight="bold",size=8)
         #ax[row,col].text(preds[2],preds[3],"{:.2f}".format(data[entry][2][0].item()),bbox=dict(facecolor='magenta', alpha=0.5),transform=ax[row,col].transAxes)
         col += 1
