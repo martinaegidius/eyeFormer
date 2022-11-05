@@ -300,7 +300,7 @@ OVERFIT = True
 NUM_IN_OVERFIT = 8
 classString = "airplanes"
 SAVEFIGS = False
-BATCH_SZ = 1
+BATCH_SZ = 2
 EPOCHS = 2000
 VAL_PERC = 0.25 #length of validation set 
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
@@ -652,6 +652,10 @@ def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
     Function for calculating the accuracy between a batch of predictions and corresponding batch of targets. 
     Returns: number of correct predictions in batch, number of false predictions in batch and a list of IOU-scores for the batch
     """
+    
+    BSZ = preds.shape[0]
+    assert BSZ == labels.shape[0],"Batch-size dimensions between target and tensor not in corresondance!"
+    
     no_corr = 0 
     no_false = 0
     IOU_li = []
@@ -660,15 +664,25 @@ def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
         preds = preds.unsqueeze(0)
     if labels.dim()==1:
         labels = labels.unsqueeze(0)
-    for i in range(preds.shape[0]): #get pascal-criterium accuraccy
-        IOU = ops.box_iou(preds,labels) #outputs: Nx4, data["target"]: Mx4
-        IOU_li.append(IOU)
+        
+    #no loop approach: 
+        #may be more effective for small batches. But only the diagonal of IOU_tmp is of interest for you - thus many wasted calculations
+    #IOU_tmp = ops.box_iou(preds,labels) #calculates pairwise 
+    #print(torch.diagonal(IOU_tmp))
+    
+    for i in range(BSZ): #get pascal-criterium accuraccy
+        pred_tmp = preds[i,:].unsqueeze(0)
+        label_tmp = labels[i,:].unsqueeze(0)
+        IOU = ops.box_iou(pred_tmp,label_tmp)
+        IOU_li.append(IOU.item())
         if(IOU>0.5):
             no_corr += 1
         else:
             no_false += 1
 
     return no_corr,no_false,IOU_li
+
+
 
 ###-----------------------------------MODEL TRAINING----------------------------------
 model = eyeFormer_baseline()
@@ -952,36 +966,40 @@ def save_epochs(loss,acc,classString,root_dir,mode):
 save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train")
 
     
-        
-def get_mean_model(trainloader): #NEED TO FIX FOR BATCHES 
+
+def get_mean_model(trainloader): 
+    """
+    Batch-robust mean-calculator. 
+        Input: dataloader structure of batched or unbatched input
+        ---------------------------------------------------------
+        Output: tensor, shape [1,4]
+    """
     mean_vals = torch.zeros(1,4)
-    for i, data in enumerate(trainloader):
-        mean_vals += data["target"]
-    mean_vals /= len(trainloader)
+    for i, data in enumerate(trainloader): #get batch of training data
+        for j in range(data["target"].shape[0]): #loop over batch-dimension
+            mean_vals += data["target"][j]
+    mean_vals /= len(trainloader.dataset)
     return mean_vals
 
-"""experimentary: 
-    def get_mean_model(trainloader): #NOT FUNCTIONAL ATM
-        mean_vals = torch.zeros(1,4)
-        for i, data in enumerate(trainloader):
-            for i in range(data["target"].shape[0]):
-                mean_vals += data["target"][i]
-        mean_vals /= len(trainloader.dataset)
-        print("mean values: ",mean_vals)
-        return mean_vals
-"""
     
 
     
 def get_median_model(trainloader): #NEED TO FIX FOR BATCHES 
-    holder_t = torch.zeros(len(trainloader),4)
+    """
+    Batch-robust median-calculator. 
+        Input: dataloader structure of batched or unbatched input
+        ---------------------------------------------------------
+        Output: tensor, shape [1,4]
+    """
+    holder_t = torch.zeros(len(trainloader.dataset),4)
+    idx_space = 0
     for i, data in enumerate(trainloader):
-        holder_t[i,:] = data["target"]
-    
+        for j in range(data["target"].shape[0]):
+            holder_t[j+idx_space] = data["target"][j]
+        idx_space += j+1 #to ensure support for random and non-equal batch-sizes
     median_t,_ = torch.median(holder_t,dim=0,keepdim=True)
+    #if want debug: return t_holder
     return median_t
-    
-    
     
 #h1.remove()
 h2.remove()   
@@ -1009,6 +1027,8 @@ if(OVERFIT):
     no_overfit_false = 0
     no_mean_correct = 0
     no_mean_false = 0
+    no_med_correct = 0
+    no_med_false = 0
     overfit_save_struct = []
     
     for i, data in enumerate(split_trainloader):
@@ -1025,21 +1045,31 @@ if(OVERFIT):
         no_overfit_correct += accScores[0]
         no_overfit_false += accScores[1]
         IOU = accScores[2]
-        if(accScores[0]==1):
-            overfit_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-        else:
-            overfit_save_struct.append([name,str(0),accScores[2],target,output,size])
+        for i in range(len(IOU)):
+            if(IOU[i]>0.5):
+                overfit_save_struct.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            else:
+                overfit_save_struct.append([name,str(0),IOU[i],target,output,size])
         print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n IOU: {}".format(data["file"],data["target"],output,batchloss,IOU))
         trainsettestLosses.append(batchloss)
         
-       
+        #fix meanModel to have as many entrys as target-tensor: 
+        n_in_batch = target.shape[0]
+        meanModel_tmp = meanModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
+        medianModel_tmp = medianModel.repeat(n_in_batch,1)
         
-        accScores = pascalACC(meanModel,target)
+        accScores = pascalACC(meanModel_tmp,target)
         no_mean_correct += accScores[0]
         no_mean_false += accScores[1]
         
+        accScores = pascalACC(medianModel_tmp,target)
+        no_med_correct += accScores[0]
+        no_med_false += accScores[1]
+        
+        
     print("Overfitting evaluation finished. \nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    print("Median model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
     torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
 else:
@@ -1049,6 +1079,8 @@ else:
     no_train_false = 0
     no_mean_correct = 0
     no_mean_false = 0
+    no_med_correct = 0
+    no_med_false = 0
     train_save_struct = []
     
     with torch.no_grad():
@@ -1065,22 +1097,32 @@ else:
             no_train_correct += accScores[0]
             no_train_false += accScores[1]
             IOU = accScores[2]
-            if(accScores[0]==1):
-                train_save_struct.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-            else:
-                train_save_struct.append([name,str(0),accScores[2],target,output,size])
+            for i in range(len(IOU)):
+                if(IOU[i]>0.5):
+                    train_save_struct.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+                else:
+                    train_save_struct.append([name,str(0),IOU[i],target,output,size])
             print("Filename: {}\n Target: {}\n Prediction: {}\n Loss: {}\n".format(data["file"],data["target"],output,batchloss))
             trainsettestLosses.append(batchloss)
             
             #print("IOU: ",IOU)
+            n_in_batch = target.shape[0]
+            meanModel_tmp = meanModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
+            medianModel_tmp = medianModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
             
-            accScores = pascalACC(meanModel,target)
+            accScores = pascalACC(meanModel_tmp,target)
             no_mean_correct += accScores[0]
             no_mean_false += accScores[1]
+            
+            accScores = pascalACC(medianModel_tmp,target)
+            no_med_correct += accScores[0]
+            no_med_false += accScores[1]
+            
                 
             
     print("General training evaluation finished. \nTransformer accuracy with PASCAL-criterium on training-data used: {}/{}, percentage: {}".format(no_train_correct,no_train_false+no_train_correct,no_train_correct/(no_train_false+no_train_correct)))    
     print("Mean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
+    print("Median model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
     torch.save(train_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
 
@@ -1113,23 +1155,28 @@ with torch.no_grad():
         running_loss += batchloss.item()
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
-        if(accScores[0]==1):
-            correct_false_list.append([name,str(1),accScores[2],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
-        else:
-            correct_false_list.append([name,str(0),accScores[2],target,output,size])
+        IOU = accScores[2]
+        for i in range(len(IOU)):
+            if(IOU[i]>0.5):
+                correct_false_list.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
+            else:
+                correct_false_list.append([name,str(0),IOU[i],target,output,size])
             
         
         no_test_correct += accScores[0]        
         no_test_false += accScores[1]
         
-        accScores = pascalACC(meanModel,target)
+        n_in_batch = target.shape[0]
+        meanModel_tmp = meanModel.repeat(n_in_batch,1) #make n_in_batch copies along batch-dimension
+        medianModel_tmp = medianModel.repeat(n_in_batch,1)
+        accScores = pascalACC(meanModel_tmp,target)
+        
         no_test_mean_correct += accScores[0]
         no_test_mean_false += accScores[1]
         
-        accScores = pascalACC(medianModel,target)
+        accScores = pascalACC(medianModel_tmp,target)
         no_test_median_correct += accScores[0]
         no_test_median_false += accScores[1]
-        
         
         if i!=0 and i%100==0:
             print("L1-loss on every over batch {}:{}: {}\n".format(i-100,i,running_loss/100))
