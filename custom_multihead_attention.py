@@ -476,7 +476,7 @@ class eyeFormer_baseline(nn.Module):
             self.d_model = input_dim
             super().__init__() #get class instance
             #self.embedding = nn.Embedding(32,self.d_model) #33 because cls needs embedding
-            self.pos_encoder = PositionalEncoding(self.d_model,dropout)
+            self.pos_encoder = PositionalEncoding(self.d_model,dropout=dropout)
             self.encoder = TransformerEncoder(3,input_dim=self.d_model,seq_len=32,num_heads=1,dim_feedforward=hidden_dim) #False due to positional encoding made on batch in middle
             #make encoder - 3 pieces
             self.cls_token = nn.Parameter(torch.zeros(1,self.d_model),requires_grad=True)
@@ -688,7 +688,7 @@ def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
 
 
 ###-----------------------------------MODEL TRAINING----------------------------------
-model = eyeFormer_baseline()
+model = eyeFormer_baseline(dropout=0.1)
 activation = {}
 def getActivation(name):
     def hook(model,input,output):
