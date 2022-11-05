@@ -302,9 +302,14 @@ OVERFIT = True
 NUM_IN_OVERFIT = 47
 classString = "airplanes"
 SAVEFIGS = True
+#parameters
 BATCH_SZ = 2
 EPOCHS = 2000
 VAL_PERC = 0.3 #length of validation set 
+DROPOUT = 0.1
+LR_FACTOR = 1
+NUM_WARMUP = 300
+BETA = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -688,7 +693,7 @@ def pascalACC(preds,labels): #TODO: does not work for batched input. Fix
 
 
 ###-----------------------------------MODEL TRAINING----------------------------------
-model = eyeFormer_baseline(dropout=0.1)
+model = eyeFormer_baseline(dropout=DROPOUT)
 activation = {}
 def getActivation(name):
     def hook(model,input,output):
@@ -769,10 +774,9 @@ class NoamOpt:
 ###
 
 #optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
-model_opt = NoamOpt(model.d_model,1,300,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
-
-loss_fn = nn.SmoothL1Loss(beta=1) #default: mean and beta=1.0
-
+model_opt = NoamOpt(model.d_model,LR_FACTOR,NUM_WARMUP,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+loss_fn = nn.SmoothL1Loss(beta=BETA) #default: mean and beta=1.0
+print("Model parameters:\n lrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n VAL-PERC: {}".format(LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,VAL_PERC))
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
 dead_neurons_lin1 = []
 dead_neurons_lin2 = []
