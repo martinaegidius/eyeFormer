@@ -299,19 +299,19 @@ torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 47
+NUM_IN_OVERFIT = 5
 classString = "airplanes"
 SAVEFIGS = True
 #parameters
-BATCH_SZ = 2
-EPOCHS = 2000
-VAL_PERC = 0.3 #length of validation set 
-DROPOUT = 0.1
+BATCH_SZ = 1
+EPOCHS = 500
+VAL_PERC = 1/5 #length of validation set 
+DROPOUT = 0.0
 LR_FACTOR = 1
-NUM_WARMUP = 300
+NUM_WARMUP = 150
 BETA = 1
-NLAYERS = 3
-NHEADS = 2
+NLAYERS = 9
+NHEADS = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
 if(GENERATE_DATASET == True):
@@ -873,7 +873,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         
         #PASCAL CRITERIUM
         #sOutputs, sTargets = scaleBackCoords(outputs, target, imsz) #with rescaling. Proved to be uneccesarry
-        noTrue,noFalse,_ = pascalACC(outputs,target)
+        noTrue,noFalse,IOUli_t = pascalACC(outputs,target)
         #print("\nScaled pascalACC returns:\n",pascalACC(sOutputs,sTargets))
         #print("\nOriginal pascalACC returns:\n",pascalACC(outputs,target))
         #print("\ngetIOU function returns:\n",getIOU(outputs,target,sensitivity=0.5))
@@ -888,7 +888,9 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         running_loss += loss.item() #is complete EPOCHLOSS
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
         model_opt.step()
-        
+    
+    
+    IOU_mt = sum(IOUli_t)/len(IOUli_t)        
     model.eval()
    
     false_val_count = 0
@@ -900,7 +902,7 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         mask = data["mask"]
         outputs = model(data["signal"],mask)
         #sOutputs, sTargets = scaleBackCoords(outputs, target, imsz)
-        noTrue,noFalse,_ = pascalACC(outputs,target)
+        noTrue,noFalse,IOUli_v = pascalACC(outputs,target)
         
         #PASCAL CRITERIUM
         #noTrue,noFalse,_ = getIOU(outputs,target,sensitivity=0.5)
@@ -914,13 +916,13 @@ def train_one_epoch_w_val(model,loss,train,oTrain,val_perc = 0.25,overfit=False,
         val_loss += loss.item() #is complete EPOCHLOSS
         
        
-        
+    IOU_mv = sum(IOUli_v)/len(IOUli_v)
     epochLoss = running_loss/counter 
     epochAcc = correct_count/len(trainloader.dataset)
     epochValLoss = val_loss/len(valloader.dataset)
     #print("complete over-epoch val loss: ",epochValLoss)   
     epochValAcc = correct_val_count/len(valloader.dataset)
-    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc,trainloader,valloader
+    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc,trainloader,valloader, IOU_mt, IOU_mv
 
 
 
@@ -931,6 +933,9 @@ epochLossLI = []
 epochAccLI = []
 epochValLossLI = []
 epochValAccLI = []
+epochIOU = []
+trainIOU = []
+valIOU = []
 torch.autograd.set_detect_anomaly(True)
 
 for epoch in (pbar:=tqdm(range(EPOCHS))):
@@ -938,7 +943,7 @@ for epoch in (pbar:=tqdm(range(EPOCHS))):
     try:
         
         #epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model = train_one_epoch(model,loss_fn,trainloader,oTrainLoader,overfit=OVERFIT,negative_print=False)
-        epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc,split_trainloader,split_valloader = train_one_epoch_w_val(model,loss_fn,train,overfitSet,overfit=OVERFIT,negative_print=False,val_perc=VAL_PERC)
+        epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc,split_trainloader,split_valloader,IOU_t,IOU_v = train_one_epoch_w_val(model,loss_fn,train,overfitSet,overfit=OVERFIT,negative_print=False,val_perc=VAL_PERC)
         """#without tqdm
         #print("EPOCH {}:".format(epoch_number+1))    
         print("epoch loss {}".format(epochLoss))
@@ -947,12 +952,14 @@ for epoch in (pbar:=tqdm(range(EPOCHS))):
         print("epoch train acc {}".format(epochAcc))
         """
         
-        tmpStr = f" | avg train loss {epochLoss:.2f} | train acc: {epochAcc:.2f} | avg val loss: {valLoss:.2f} | avg val acc: {valAcc:.2f}"
+        tmpStr = f" | avg train loss {epochLoss:.2f} | train acc: {epochAcc:.2f} | avg val loss: {valLoss:.2f} | avg val acc: {valAcc:.2f} | Mean IOU: {IOU_t:.2f}"
         pbar.set_postfix_str(tmpStr)
         epochLossLI.append(epochLoss)
         epochAccLI.append(epochAcc)
         epochValAccLI.append(valAcc)
         epochValLossLI.append(valLoss)
+        valIOU.append(IOU_v)
+        trainIOU.append(IOU_t)
         epoch_number += 1 
         #if(epochAcc==1):
          #   print("Perfect overfit at epoch {}".format(epoch_number+1))
@@ -1029,6 +1036,7 @@ h6.remove()
 #---------------------TEST AND EVAL -------------#
 #1. TEST-LOOP ON TRAIN-SET
 trainsettestLosses = []
+IOU_tr_li = []
 
 #eval on TRAIN SET 
 meanModel = get_mean_model(split_trainloader)
@@ -1060,6 +1068,7 @@ if(OVERFIT):
         no_overfit_correct += accScores[0]
         no_overfit_false += accScores[1]
         IOU = accScores[2]
+        IOU_tr_li += IOU
         for i in range(len(IOU)):
             if(IOU[i]>0.5):
                 overfit_save_struct.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
@@ -1085,6 +1094,7 @@ if(OVERFIT):
     print("\nTransformer accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_overfit_correct,no_overfit_false+no_overfit_correct,no_overfit_correct/(no_overfit_false+no_overfit_correct)))    
     print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
+    print("\nMean IOU is {}".format(sum(IOU_tr_li)/len(IOU_tr_li)))
     torch.save(overfit_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
@@ -1113,6 +1123,7 @@ else:
             no_train_correct += accScores[0]
             no_train_false += accScores[1]
             IOU = accScores[2]
+            IOU_tr_li += IOU
             for i in range(len(IOU)):
                 if(IOU[i]>0.5):
                     train_save_struct.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
@@ -1140,6 +1151,7 @@ else:
     print("\n\nTransformer accuracy with PASCAL-criterium on training-data used: {}/{}, percentage: {}".format(no_train_correct,no_train_false+no_train_correct,no_train_correct/(no_train_false+no_train_correct)))    
     print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
+    print("\nMean IOU is {}".format(sum(IOU_tr_li)/len(IOU_tr_li)))
     torch.save(train_save_struct,root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
     
@@ -1155,6 +1167,7 @@ no_test_median_correct = 0
 no_test_median_false = 0
 testlosses = []
 correct_false_list = []
+IOU_te_li = []
 
 # meanModel = get_mean_model(oTrainLoader)
 # medianModel = get_median_model(oTrainLoader)
@@ -1174,6 +1187,7 @@ with torch.no_grad():
         testlosses.append(batchloss.item())
         accScores = pascalACC(output,target)
         IOU = accScores[2]
+        IOU_te_li += IOU
         for i in range(len(IOU)):
             if(IOU[i]>0.5):
                 correct_false_list.append([name,str(1),IOU[i],target,output,size]) #filename, pred-status: correct(1):false(0), IOU-value, ground-truth, prediction-value 
@@ -1209,6 +1223,7 @@ print("---------------EVAL on ALL {} test-images---------------".format(len(test
 print("\nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_correct,no_test_false+no_test_correct,no_test_correct/(no_test_false+no_test_correct)))    
 print("\nMean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
 print("\nMedian model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_median_correct,no_test_median_false+no_test_median_correct,testmedianAcc))    
+print("\nMean IOU is {}".format(sum(IOU_te_li)/len(IOU_te_li)))
 torch.save(correct_false_list,root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
 print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
     
