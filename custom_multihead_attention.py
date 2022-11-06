@@ -299,16 +299,16 @@ torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 5
+NUM_IN_OVERFIT = 2
 classString = "airplanes"
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
 EPOCHS = 500
-VAL_PERC = 1/5 #length of validation set 
+VAL_PERC = 1/2 #length of validation set 
 DROPOUT = 0.0
 LR_FACTOR = 1
-NUM_WARMUP = 150
+NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
 BETA = 1
 NLAYERS = 9
 NHEADS = 1
@@ -746,6 +746,8 @@ def getIOU(preds,target,sensitivity=0.5): #todo: fix for bigger batches
 #=================DEFINE OPTIMIZER ================#
 class NoamOpt:
     #"Optim wrapper that implements rate."
+    # !Important: warmup is number of steps (number of forward pass), not number of epochs. 
+    # number of forward passes in one epoch: len(trainloader.dataset)/len(trainloader)
     def __init__(self, model_size, factor, warmup, optimizer):
         self.optimizer = optimizer
         self._step = 0
@@ -774,9 +776,8 @@ class NoamOpt:
     def get_std_opt(model):
         return NoamOpt(model.d_model, 2, 4000,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
 ###
-
-#optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 model_opt = NoamOpt(model.d_model,LR_FACTOR,NUM_WARMUP,torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+#optimizer = torch.optim.Adam(model.parameters(),lr=0.0001) #[2e-2,2e-4,2e-5,3e-5,5e-5]
 loss_fn = nn.SmoothL1Loss(beta=BETA) #default: mean and beta=1.0
 print("Model parameters:\n lrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n VAL-PERC: {}\n NHEADS: {}\n NLAYERS: {}".format(LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,VAL_PERC,NHEADS,NLAYERS))
 encoder_list,linear_list,lin1_list,lin2_list = [], [],[],[]
