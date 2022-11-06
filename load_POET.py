@@ -278,7 +278,7 @@ class pascalET():
         plt.legend()
         plt.imshow(im)
         
-    def specific_plot(self,classOC,filename,resized=False):
+    def specific_plot(self,classOC,filename,resized=False,multiple=False,last32=False):
         from matplotlib.patches import Rectangle
         classdict = {0:"aeroplane",1:"bicycle",2:"boat",3:"cat",4:"cow",5:"diningtable",6:"dog",7:"horse",8:"motorbike",9:"sofa"}    
         self.chosen_class = classdict[classOC]
@@ -301,8 +301,16 @@ class pascalET():
         
         ax = plt.gca()
         lol = self.bbox[idx]
-        x,y,w,h = self.get_bounding_box(self.bbox[idx])
-        rect = Rectangle((x,y),w,h,linewidth=1, edgecolor='r', facecolor='none')
+        print(self.bbox[idx])
+        #single box: 
+        if(multiple==False):
+            x,y,w,h = self.get_bounding_box(self.bbox[idx])
+        else:
+            pass
+            
+        #all boxes: 
+        
+        rect = Rectangle((x,y),w,h,linewidth=2, edgecolor='r', facecolor='none')
         ax.add_patch(rect)
         
         for i in range(self.NUM_TRACKERS):
@@ -315,13 +323,18 @@ class pascalET():
             plt.plot(self.eyeData[idx,i][0][0:num_fix,0],self.eyeData[idx,i][0][0:num_fix,1],label=str(),color= color)
             plt.plot(self.eyeData[idx,i][0][num_fix:,0],self.eyeData[idx,i][0][num_fix:,1],label=str(),color = color)
             """
-            plt.scatter(self.eyeData[classOC,idx,i][0][:,0],self.eyeData[classOC,idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
-            plt.plot(self.eyeData[classOC,idx,i][0][0:num_fix,0],self.eyeData[classOC,idx,i][0][0:num_fix,1],label=str(),color= color)
-            plt.plot(self.eyeData[classOC,idx,i][0][num_fix:,0],self.eyeData[classOC,idx,i][0][num_fix:,1],label=str(),color = color)
-            
+            if(last32==False):
+                plt.scatter(self.eyeData[classOC,idx,i][0][:,0],self.eyeData[classOC,idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
+                plt.plot(self.eyeData[classOC,idx,i][0][0:num_fix,0],self.eyeData[classOC,idx,i][0][0:num_fix,1],label=str(),color= color)
+                plt.plot(self.eyeData[classOC,idx,i][0][num_fix:,0],self.eyeData[classOC,idx,i][0][num_fix:,1],label=str(),color = color)
+            else: 
+                plt.scatter(self.eyeData[classOC,idx,i][0][-32:,0],self.eyeData[classOC,idx,i][0][-32:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
+                plt.plot(self.eyeData[classOC,idx,i][0][-32:,0],self.eyeData[classOC,idx,i][0][-32:,1],label=str(),color= color)
+                plt.plot(self.eyeData[classOC,idx,i][0][-32:,0],self.eyeData[classOC,idx,i][0][-32:,1],label=str(),color = color)
         plt.legend()
         plt.imshow(im)
-        
+        plt.savefig("after_cleanup.png")
+       
         
         
     def basic_hists(self):
@@ -415,6 +428,70 @@ class pascalET():
         print("Classwise ratio vars: \n",ratio_var)
         print("Classwise num_px means: \n",num_px_means)
         print("Classwise num_px vars: \n",num_px_var)
+       
+    def specific_plot_multiple_boxes(self,classOC,filename):
+        from matplotlib.patches import Rectangle
+        classdict = {0:"aeroplane",1:"bicycle",2:"boat",3:"cat",4:"cow",5:"diningtable",6:"dog",7:"horse",8:"motorbike",9:"sofa"}    
+        self.chosen_class = classdict[classOC]
+        
+        try: 
+            idx = self.filename.index(filename) #get index of requested file
+        except:
+            print("Filename not found in loaded data. Did you type correctly?")
+            return
+            
+        
+        path = self.p + "/Data/POETdataset/PascalImages/" +self.chosen_class+"_"+filename
+            
+        fig = plt.figure(3289)
+        im = image.imread(path)
+        plt.title("{}:{}".format(self.chosen_class,filename))
+        #now for eye-tracking-data
+        
+        ax = plt.gca()
+        #single box: 
+        print(self.bbox[idx])
+        for i in range(self.bbox[idx].shape[0]):
+            print(i)
+            print(self.bbox[idx][0])
+            x,y,w,h = self.get_bounding_box(self.bbox[idx][i])
+            rect = Rectangle((x,y),w,h,linewidth=2, edgecolor='r', facecolor='none')
+            ax.add_patch(rect)
+        
+        for i in range(self.NUM_TRACKERS):
+            color = next(ax._get_lines.prop_cycler)['color']
+            mylabel = str(i+1)
+            num_fix = int(self.eyeData[classOC,idx,i][0].shape[0]/2) #get #no of rows
+            print(num_fix) #number of fixations on img
+            #Left eye
+            """plt.scatter(self.eyeData[idx,i][0][:,0],self.eyeData[idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
+            plt.plot(self.eyeData[idx,i][0][0:num_fix,0],self.eyeData[idx,i][0][0:num_fix,1],label=str(),color= color)
+            plt.plot(self.eyeData[idx,i][0][num_fix:,0],self.eyeData[idx,i][0][num_fix:,1],label=str(),color = color)
+            """
+            plt.scatter(self.eyeData[classOC,idx,i][0][:,0],self.eyeData[classOC,idx,i][0][:,1],alpha=0.8,label=mylabel,color = color) #format: [classNo,file in class No, tracker No, listindex (always 0)]
+            plt.plot(self.eyeData[classOC,idx,i][0][0:num_fix,0],self.eyeData[classOC,idx,i][0][0:num_fix,1],label=str(),color= color)
+            plt.plot(self.eyeData[classOC,idx,i][0][num_fix:,0],self.eyeData[classOC,idx,i][0][num_fix:,1],label=str(),color = color)
+            
+                
+                 
+        plt.imshow(im)
+        plt.legend()
+        plt.savefig("before_cleanup.png")
         
         
+if __name__ == "__main__":
+    """dset = pascalET()
+    dset.loadmat()
+    dset.convert_eyetracking_data(CLEANUP=False, STATS=False)
+    dset.load_images_for_class(0)
+    #dset.specific_plot(0,"2008_003475")
+    dset.specific_plot_multiple_boxes(0,"2008_003475.jpg")
+    dset.convert_eyetracking_data(CLEANUP=True, STATS=True)
+    del dset """
+    dset = pascalET()
+    dset.loadmat()
+    dset.convert_eyetracking_data(CLEANUP=True, STATS=True)
+    dset.load_images_for_class(0)
+    dset.specific_plot(0,"2008_003475.jpg",last32=False)
+    
     

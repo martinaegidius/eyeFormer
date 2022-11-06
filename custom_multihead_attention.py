@@ -299,18 +299,18 @@ torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
 OVERFIT = True
-NUM_IN_OVERFIT = 2
+NUM_IN_OVERFIT = 10
 classString = "airplanes"
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
 EPOCHS = 500
-VAL_PERC = 1/2 #length of validation set 
+VAL_PERC = 1/5 #length of validation set 
 DROPOUT = 0.0
 LR_FACTOR = 1
 NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
 BETA = 1
-NLAYERS = 9
+NLAYERS = 6
 NHEADS = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
