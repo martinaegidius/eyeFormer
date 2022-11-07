@@ -17,7 +17,7 @@ import math
 DEBUG = True
 
 #-----------------------END>--------------------------#
-className = "airplanes"
+className = "cat"
 impath = os.path.dirname(__file__)+"/Data/POETdataset/" #path for image-data
 dpath = impath + className #path for saved model-results
 impath += "/PascalImages/"

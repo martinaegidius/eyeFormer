@@ -222,7 +222,7 @@ def generate_DS(dataFrame,classes=[x for x in range(10)]):
             df[i,2] = classes[0]
             targets[i] =  dataFrame.etData[classes[0]][i].gtbb
             classlabels[i] = classes[0]
-            imdims[i] = dataFrame.etData[classes[0]][i].dimensions
+            imdims[i] = dataFrame.etData[classes[0]][i].dimensions[:2] #some classes also have channel-dim
             for j in range(dataFrame.NUM_TRACKERS):
                 sliceShape = dataFrame.eyeData[classes[0]][i][j][0].shape
                 df[i,3+j] = dataFrame.eyeData[classes[0]][i][j][0] #list items
@@ -297,10 +297,10 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 torch.manual_seed(9)
 CHECK_BALANCE = False
-GENERATE_DATASET = False
+GENERATE_DATASET = True
 OVERFIT = True
 NUM_IN_OVERFIT = 10
-classString = "airplanes"
+classString = "cat"
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
@@ -310,7 +310,7 @@ DROPOUT = 0.0
 LR_FACTOR = 1
 NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
 BETA = 1
-NLAYERS = 6
+NLAYERS = 1
 NHEADS = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
@@ -323,7 +323,7 @@ if(GENERATE_DATASET == True):
     #airplanesBoats = AirplanesBoatsDataset(dataFrame, EYES, FILES, TARGETS,CLASSLABELS, root_dir, [0,9]) #init dataset as torch.Dataset.
     """
     
-    classesOC = [0]
+    classesOC = [3]
     composed = transforms.Compose([transforms.Lambda(tensorPad()),
                                    transforms.Lambda(rescale_coords())]) #transforms.Lambda(tensor_pad() also a possibility, but is probably unecc.
     
