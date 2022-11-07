@@ -16,6 +16,14 @@ from torchvision import transforms, ops
 import math
 from sklearn.model_selection import KFold
 from tqdm import tqdm
+import sys
+
+###CALL WITH SYSTEM ARGUMENT 
+try:
+    classChoice = int(sys.argv[1])
+except:
+    classChoice = None
+    pass
 
 
 class AirplanesBoatsDataset(Dataset):
@@ -226,8 +234,8 @@ def generate_DS(dataFrame,classes=[x for x in range(10)]):
             for j in range(dataFrame.NUM_TRACKERS):
                 sliceShape = dataFrame.eyeData[classes[0]][i][j][0].shape
                 df[i,3+j] = dataFrame.eyeData[classes[0]][i][j][0] #list items
-                if(sliceShape != (2,0)): #for empty
-                    eyes[i,j,:sliceShape[0],:] = torch.from_numpy(dataFrame.eyeData[classes[0]][i][j][0][-32:])
+                if(sliceShape != (2,0)): #for all non-empty
+                    eyes[i,j,:sliceShape[0],:] = torch.from_numpy(dataFrame.eyeData[classes[0]][i][j][0][-32:].astype(np.int32)) #some entries are in uint16, which torch does not support
                 else: 
                     eyes[i,j,:,:] = 0.0
                     print("error-filled measurement [entryNo,participantNo]: ",i,",",j)
@@ -293,24 +301,31 @@ def zero_pad(inArr: np.array,padto: int,padding: int):
         outTensor[:numEntries,:] = torch.from_numpy(inArr[-numEntries:,:]) #get all
         return outTensor
     
-
+classes = ["aeroplane","bicycle","boat","cat","cow","diningtable","dog","horse","motorbike","sofa"]
+if(classChoice!=None):
+    classesOC = [classChoice]
+else:
+    print("No selection of data provided. Used cats.")
+    classesOC = [5]
+    classChoice = 5
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = True
 OVERFIT = True
-NUM_IN_OVERFIT = 10
-classString = "cat"
+NUM_IN_OVERFIT = 47
+#classString = "cat"
+classString = classes[classChoice]
 SAVEFIGS = True
 #parameters
-BATCH_SZ = 1
-EPOCHS = 500
+BATCH_SZ = 4
+EPOCHS = 4000
 VAL_PERC = 1/5 #length of validation set 
 DROPOUT = 0.0
 LR_FACTOR = 1
 NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
 BETA = 1
-NLAYERS = 1
+NLAYERS = 9
 NHEADS = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
@@ -323,7 +338,7 @@ if(GENERATE_DATASET == True):
     #airplanesBoats = AirplanesBoatsDataset(dataFrame, EYES, FILES, TARGETS,CLASSLABELS, root_dir, [0,9]) #init dataset as torch.Dataset.
     """
     
-    classesOC = [3]
+    
     composed = transforms.Compose([transforms.Lambda(tensorPad()),
                                    transforms.Lambda(rescale_coords())]) #transforms.Lambda(tensor_pad() also a possibility, but is probably unecc.
     
@@ -345,6 +360,7 @@ if(GENERATE_DATASET == True):
     ###load split from data
     
     split_root_dir = os.path.dirname(__file__)
+    NUM_IN_OVERFIT=len(train)
 
 def get_split(root_dir,classesOC):
     """
@@ -354,7 +370,7 @@ def get_split(root_dir,classesOC):
         root_dir, ie. path to main-project-folder
         classesOC: List of classes of interest
         
-       Returns:
+        Returns:
         list of filenames for training
         list of filenames for testing
     """
@@ -392,6 +408,8 @@ def get_split(root_dir,classesOC):
         test = [*test,*test_data[i]]        
          
     return train,test
+
+
 
 root_dir = os.path.dirname(__file__) + "/Data/POETdataset/"
 if(GENERATE_DATASET == True):

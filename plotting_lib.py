@@ -17,7 +17,7 @@ import math
 DEBUG = True
 
 #-----------------------END>--------------------------#
-className = "cat"
+className = "diningtable"
 impath = os.path.dirname(__file__)+"/Data/POETdataset/" #path for image-data
 dpath = impath + className #path for saved model-results
 impath += "/PascalImages/"
@@ -108,7 +108,7 @@ def bbox_for_plot(data):
     
     return target,preds
     
-def mean_model(data):
+def mean_model(data): #does not work for batched data yet. 
     #Generate mean-model of training-data
     holder_t = torch.zeros(len(data),4)
     for entry in range(len(data)):
@@ -116,7 +116,7 @@ def mean_model(data):
         holder_t[entry] = data[entry][3].squeeze(0)
     return torch.mean(holder_t,0)
         
-def median_model(data):
+def median_model(data): #does not work for batched data yet.
     #Generate median-model of training-data
     holder_t = torch.zeros(len(data),4)
     for entry in range(len(data)):
@@ -295,10 +295,8 @@ plot_train_set(testOnTrain,impath)
 
 mean = mean_model(testOnTrain)
 median = median_model(testOnTrain)
-plot_test_set(testdata,impath,meanBox=mean,medianBox=median,mode="success")
-plot_test_set(testdata,impath,meanBox=mean,medianBox=median,mode="failure")
-
-
+plot_test_set(testdata,impath,classOC=5,meanBox=mean,medianBox=median,mode="success")
+plot_test_set(testdata,impath,classOC=5,meanBox=mean,medianBox=median,mode="failure")
 
 
 
