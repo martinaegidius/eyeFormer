@@ -306,8 +306,8 @@ if(classChoice!=None):
     classesOC = [classChoice]
 else:
     print("No selection of data provided. Used cats.")
-    classesOC = [5]
-    classChoice = 5
+    classesOC = [3]
+    classChoice = 3
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 torch.manual_seed(9)
 CHECK_BALANCE = False
