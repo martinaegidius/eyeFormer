@@ -333,7 +333,7 @@ classString = classes[classChoice]
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
-EPOCHS = 2000
+EPOCHS = 2
 DROPOUT = 0.0
 LR_FACTOR = 1
 NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
@@ -1139,6 +1139,8 @@ medianModel = get_median_model(trainloader)
 
 model.eval()
 
+print("Entered evaluation-phase.")
+print("Model parameters:\n tL: {}\n vL: {}\nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,len(valIDX),LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
 print("Evaluating overfit on ALL {} train instances".format(len(trainloader.dataset)))
 
 no_overfit_correct = 0
