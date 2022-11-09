@@ -9,12 +9,10 @@ from load_POET import pascalET
 import os 
 from torch.utils.data import Dataset, DataLoader
 import torch 
-import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
 from torchvision import transforms, ops
 import math
-from sklearn.model_selection import KFold
 from tqdm import tqdm
 import sys
 
@@ -334,9 +332,9 @@ SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
 EPOCHS = 2000
-DROPOUT = 0.0
-LR_FACTOR = 1
-NUM_WARMUP = int(EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ)) #constant 1/3 warmup-rate
+DROPOUT = 0.1
+LR_FACTOR = 1/5
+NUM_WARMUP = int(EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ)) #constant 30% warmup-rate 
 BETA = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 

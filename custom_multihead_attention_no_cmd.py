@@ -334,8 +334,8 @@ SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
 EPOCHS = 2000
-DROPOUT = 0.0
-LR_FACTOR = 1
+DROPOUT = 0.1
+LR_FACTOR = 1/5
 NUM_WARMUP = EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ) #constant 30% warmup-rate
 BETA = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#

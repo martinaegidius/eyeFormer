@@ -17,21 +17,28 @@ import numpy as np
 """
 #-------------------------Learning-curves-plotting script for all classes---------------------------------#
 
-Usage: first scp all run-results, then simply run
+Usage: first scp all run-results
+cp folder-contens of nL_1_nH_2 to inst folder of interest
+then simply run
+
+#Todo: cp cat, cow, diningtable, dog, horse, motorbike and sofa as follows
+        scp -r s194119@login1.gbar.dtu.dk:BA/eyeFormer/Data/POETdataset/boat/nL_1_nH_2 /home/max/Documents/s194119/Bachelor/Results/1_fold_results/boat/
+
+Additionally: you ran it without dropout -.- 
 
 #---------------------------------------------------------------------------------------------------------#
 """
 
 sns.set_theme()
-root_path = os.path.dirname(__file__)+"/Data/POETdataset/airplanes/experiment1/"
-classes = ["aeroplane","bicycle","boat","cat","cow","diningtable","dog","horse","motorbike","sofa"]
+root_path = os.path.dirname(__file__)+"/Data/POETdataset/"
+classes = ["aeroplane","bicycle","boat"]#,"cat","cow","diningtable","dog","horse","motorbike","sofa"]
 
 epochDict = {"aeroplane":[-1,-1],"bicycle":[-1,-1],"boat":[-1,-1],"cat":[-1,-1],
              "cow":[-1,-1],"diningtable":[-1,-1],"dog":[-1,-1],"horse":[-1,-1],
              "motorbike":[-1,-1],"sofa":[-1,-1]} #make a dict for storing data for optimal number of epochs. 
 
 for inst in classes:
-    path = os.path.dirname(__file__)+"/Results/1_fold_results/"+inst+"/"
+    path = os.path.dirname(__file__)+"/Results/1_fold_results/"+inst+"/nL_1_nH_2/"
     
     train_loss = torch.load(path+inst+"_train_losses.pth")
     val_loss = torch.load(path+inst+"_val_losses.pth")
@@ -56,5 +63,5 @@ for inst in classes:
     
 
     plt.savefig(path+"learning_curves.pdf")
+np.save(path+"../../"+"optimal_no_epochs.npy",epochDict) #save number of epochs to file 
 
-np.save(root_path+"optimal_no_epochs.npy",epochDict) #save number of epochs to file 
