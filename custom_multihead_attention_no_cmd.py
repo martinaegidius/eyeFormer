@@ -321,9 +321,9 @@ OVERFIT = True
 
 
 # #RUN_FROM_COMMANDLINE. Class at top of programme.
-NUM_IN_OVERFIT = int(sys.argv[2])
-NLAYERS = int(sys.argv[3])
-NHEADS = int(sys.argv[4])
+NUM_IN_OVERFIT = 32
+NLAYERS = 1
+NHEADS = 2
 
 #NUM_IN_OVERFIT = 1
 #NLAYERS = 1
@@ -333,7 +333,7 @@ classString = classes[classChoice]
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
-EPOCHS = 1000
+EPOCHS = 2000
 DROPOUT = 0.0
 LR_FACTOR = 1
 NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)

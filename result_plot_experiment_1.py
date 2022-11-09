@@ -11,8 +11,10 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt 
 import numpy as np 
+#from matplotlib.ticker import FormatStrFormatter
 
-path = os.path.dirname(__file__) + "/Results/overfitting_airplanes_results_with_head_titles.csv"
+path1 = os.path.dirname(__file__) + "/Results/"
+path = path1 + "1st_exp_res_fixed_val_delim.csv"
 data = pd.read_csv(path)
 
 
@@ -64,32 +66,36 @@ x[x==1] = 0
 x[x==4] = 1
 x[x==8] = 2
 x[x==16] = 3
-x[x==32] = 4
+#x[x==32] = 4
 
 noise = np.random.normal(0,0.07,len(x))
+#noiseY = np.random.normal(0,0.01,len(x))
 x += noise
 
 fig,axes = plt.subplots(2,1, sharex=True,figsize=(13,11))
 plt.subplots_adjust(hspace=0.08)
 
-g = sns.scatterplot(ax=axes[0],x=x,y=data.Tr_loc,hue=data.N_L,style=data.N_H,alpha=0.5,palette="deep",s=150,markers=["o","D"])
+g = sns.scatterplot(ax=axes[0],x=x,y=data.Tr_loc,hue=data.N_L,style=data.N_H,alpha=0.6,palette="deep",s=150,markers=["o","D"])
 axes[0].set_xlabel("Training-set length",fontsize=12)
 axes[0].set_ylabel("Train CorLoc",fontsize=12)
-axes[0].set_xticks(np.arange(5))
-axes[0].set_xticklabels(["1","4","8","16","32"])
+axes[0].set_xticks(np.arange(4))
+#axes[0].set_yticks(np.arange(0,1.2,0.2))
+axes[0].set_xticklabels(["1","4","8","16"])
+#axes[0].set_yticklabels(["0.0","0.2","0.4","0.6","0.8","1.0"])
 axes[0].tick_params(axis='both', which='major', labelsize=11)
+#axes[0].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
 #plt.legend(loc="upper center",ncol=8)
 #handles = g._legend_data.values()
 #labels = g._legend_data.keys()
 
 sns.move_legend(g,"upper center",bbox_to_anchor=(0.5,1.15),ncol=8)
 
-h = sns.scatterplot(ax=axes[1],x=x,y=data.Te_loc,hue=data.N_L,style=data.N_H,alpha=0.5,palette="deep",s=150,markers=["o","D"])
+h = sns.scatterplot(ax=axes[1],x=x,y=data.Te_loc,hue=data.N_L,style=data.N_H,alpha=0.6,palette="deep",s=150,markers=["o","D"])
 h.legend_.remove()
 axes[1].set_xlabel("Training-set length")
 axes[1].set_ylabel("Test CorLoc")
-axes[1].set_xticks(np.arange(5))
-axes[1].set_xticklabels(["1","4","8","16","32"])
+axes[1].set_xticks(np.arange(4))
+axes[1].set_xticklabels(["1","4","8","16"])
 axes[1].tick_params(axis='both', which='major', labelsize=11)
 #make row legend
 
