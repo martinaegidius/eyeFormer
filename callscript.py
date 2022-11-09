@@ -12,7 +12,7 @@ import os
 classOC = int(sys.argv[1])
 
 
-L = [1,4,8,16,32]
+L = [1,4,8,16]
 
 
 

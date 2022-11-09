@@ -333,7 +333,7 @@ classString = classes[classChoice]
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
-EPOCHS = 2000
+EPOCHS = 1000
 DROPOUT = 0.0
 LR_FACTOR = 1
 NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
