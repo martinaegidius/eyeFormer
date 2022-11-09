@@ -462,7 +462,7 @@ g.manual_seed(8)
 
 if(OVERFIT): #CREATES TRAIN AND VALIDATION-SPLIT 
     IDX = torch.randperm(len(train),generator=g)#[:NUM_IN_OVERFIT].unsqueeze(1) #random permutation, followed by sampling and unsqueezing
-    ofIDX = IDX[:NUM_IN_OVERFIT].unsq7xoPpZ94p2wXueeze(1)
+    ofIDX = IDX[:NUM_IN_OVERFIT].unsqueeze(1)
     valIDX = IDX[NUM_IN_OVERFIT:NUM_IN_OVERFIT+17].unsqueeze(1) #17 because the smallest train-set has length 33=max(L)+17.
     overfitSet = torch.utils.data.Subset(train,ofIDX)
     valSet = torch.utils.data.Subset(train,valIDX)
