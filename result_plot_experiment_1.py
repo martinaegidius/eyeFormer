@@ -97,8 +97,9 @@ axes[1].set_ylabel("Test CorLoc")
 axes[1].set_xticks(np.arange(4))
 axes[1].set_xticklabels(["1","4","8","16"])
 axes[1].tick_params(axis='both', which='major', labelsize=11)
+axes[1].set_ylabel("Test CorLoc",fontsize=12)
 #make row legend
 
 plt.show()
-plt.savefig(path+"results_on_experiment1.pdf")
+plt.savefig(path1+"results_on_experiment1.pdf")
 

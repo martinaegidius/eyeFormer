@@ -336,7 +336,7 @@ BATCH_SZ = 1
 EPOCHS = 2000
 DROPOUT = 0.0
 LR_FACTOR = 1
-NUM_WARMUP = 150*(NUM_IN_OVERFIT//BATCH_SZ)
+NUM_WARMUP = EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ) #constant 30% warmup-rate
 BETA = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 

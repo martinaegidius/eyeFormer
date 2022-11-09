@@ -9,6 +9,8 @@ Created on Tue Nov  8 16:22:30 2022
 import sys
 import os 
 
+#for running exp 1 
+
 classOC = int(sys.argv[1])
 
 

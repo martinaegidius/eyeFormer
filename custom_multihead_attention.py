@@ -325,9 +325,9 @@ NUM_IN_OVERFIT = int(sys.argv[2])
 NLAYERS = int(sys.argv[3])
 NHEADS = int(sys.argv[4])
 
-#NUM_IN_OVERFIT = 1
+#NUM_IN_OVERFIT = 74
 #NLAYERS = 1
-#NHEADS = 1
+#NHEADS = 2
 
 classString = classes[classChoice]
 SAVEFIGS = True
@@ -336,7 +336,7 @@ BATCH_SZ = 1
 EPOCHS = 2000
 DROPOUT = 0.0
 LR_FACTOR = 1
-NUM_WARMUP = EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ)
+NUM_WARMUP = int(EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ)) #constant 1/3 warmup-rate
 BETA = 1
 #-------------------------------------SCRIPT PARAMETERS---------------------------------------#
 
@@ -462,7 +462,7 @@ g.manual_seed(8)
 
 if(OVERFIT): #CREATES TRAIN AND VALIDATION-SPLIT 
     IDX = torch.randperm(len(train),generator=g)#[:NUM_IN_OVERFIT].unsqueeze(1) #random permutation, followed by sampling and unsqueezing
-    ofIDX = IDX[:NUM_IN_OVERFIT].unsq7xoPpZ94p2wXueeze(1)
+    ofIDX = IDX[:NUM_IN_OVERFIT].unsqueeze(1)
     valIDX = IDX[NUM_IN_OVERFIT:NUM_IN_OVERFIT+17].unsqueeze(1) #17 because the smallest train-set has length 33=max(L)+17.
     overfitSet = torch.utils.data.Subset(train,ofIDX)
     valSet = torch.utils.data.Subset(train,valIDX)
