@@ -46,8 +46,12 @@ pwds = os.path.dirname(__file__)+"/Results/1_fold_results_nl_6_nh_2/"
 if not os.path.exists(pwds):
     os.mkdir(pwds)
 
+plt.ioff()
+
 #for inst in classes:
 for inst in classes:
+    #PLOT LOSS-CURVES
+    fig = plt.figure()
     path = os.path.dirname(__file__)+"/Results/1_fold_results_nl_6_nh_2/"+inst+"/nL_6_nH_2/"
     train_loss = torch.load(path+inst+"_train_losses.pth")
     val_loss = torch.load(path+inst+"_val_losses.pth")
@@ -67,7 +71,7 @@ for inst in classes:
     axes[1].semilogy(train_loss)
     axes[1].semilogy(val_loss)
     axes[1].set_xlabel("Epochs",fontsize=FSZ,fontweight="bold")
-    axes[1].set_ylabel("Logarithmic L1-Loss",fontsize=FSZ,fontweight="bold")
+    axes[1].set_ylabel("Logarithmic Loss",fontsize=FSZ,fontweight="bold")
     axes[1].semilogy(idx,minVal,marker='x',markersize=11,markerfacecolor="red",markeredgewidth = 2,markeredgecolor="red",linestyle="None")
     axes[1].tick_params(axis='both', which='major', labelsize=13)
     plt.xlim([0,2000])
@@ -79,9 +83,48 @@ for inst in classes:
         line.set_linewidth(6.0)
     
     fig.suptitle(inst,size=FSZ-2)#,y=1.2)
+    plt.savefig(pwds+inst+"_learning_curves.pdf")
+    plt.close(fig)
+    
+np.save(path+"../../"+"optimal_no_epochs.npy",epochDict) #save number of epochs to file     
+    
+for inst in classes:
+    ####PLOT ACCURACY-CURVES
+    fig = plt.figure()
+    path = os.path.dirname(__file__)+"/Results/1_fold_results_nl_6_nh_2/"+inst+"/nL_6_nH_2/"
+    train_acc= torch.load(path+inst+"_train_acc.pth")
+    val_acc = torch.load(path+inst+"_val_acc.pth")
+    
+    train_acc_mv = np.convolve(train_acc,np.ones(10)/10)[:2000]
+    val_acc_mv = np.convolve(val_acc,np.ones(10)/10)[:2000]
+    fig,axes = plt.subplots(1,2,figsize=(16,7),sharex=True)
+    axes[0].plot(train_acc_mv)
+    axes[0].plot(val_acc_mv)
+    axes[0].set_xlabel("Epochs",fontsize=FSZ,fontweight="bold")
+    axes[0].set_ylabel("m. avg. IOU accuracy",fontsize=FSZ,fontweight="bold")
+    axes[0].tick_params(axis='both', which='major', labelsize=13)
+    plt.xlim([0,2000])
+    axes[1].semilogy(train_acc_mv)
+    axes[1].semilogy(val_acc_mv)
+    axes[1].set_xlabel("Epochs",fontsize=FSZ,fontweight="bold")
+    axes[1].set_ylabel("m. avg. Logarithmic IOU accuracy",fontsize=FSZ,fontweight="bold")
+    axes[1].tick_params(axis='both', which='major', labelsize=13)
+    plt.xlim([0,2000])
+    
+    leg = fig.legend(["Train","Validation"],loc="upper center",ncol=3,bbox_to_anchor=(0.5, 0.96),
+              bbox_transform=fig.transFigure,fontsize=lFSZ) #prop={'size': 13}
+    #fig.legend(fontsize=FSZ)
+    for line in leg.get_lines():
+        line.set_linewidth(6.0)
+    
+    fig.suptitle(inst,size=FSZ-2)#,y=1.2)
+    plt.savefig(pwds+inst+"_accuracy_curves.pdf")
+    plt.close(fig)
+    
+    
+    
     
     
 
-    plt.savefig(pwds+inst+"_learning_curves.pdf")
-np.save(path+"../../"+"optimal_no_epochs.npy",epochDict) #save number of epochs to file 
+    
 
