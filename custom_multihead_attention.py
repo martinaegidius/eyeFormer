@@ -315,23 +315,25 @@ else:
 torch.manual_seed(9)
 CHECK_BALANCE = False
 GENERATE_DATASET = False
-OVERFIT = True
+OVERFIT = False
+
 
 
 # #RUN_FROM_COMMANDLINE. Class at top of programme.
-NUM_IN_OVERFIT = int(sys.argv[2])
+NUM_IN_OVERFIT = int(sys.argv[2]) #NUM-IN-OVERFIT EQUALS LEN(TRAIN) IF OVERFIT == False
 NLAYERS = int(sys.argv[3])
 NHEADS = int(sys.argv[4])
-
-#NUM_IN_OVERFIT = 74
-#NLAYERS = 1
-#NHEADS = 2
+EPOCHS = int(sys.argv[5])
+EVAL = int(sys.argv[6])
 
 classString = classes[classChoice]
 SAVEFIGS = True
 #parameters
 BATCH_SZ = 1
-EPOCHS = 2000
+if EPOCHS == None:
+    EPOCHS = 1000
+    print("Received no number of epochs. Used {}".format(EPOCHS))
+
 DROPOUT = 0.1
 LR_FACTOR = 1/5
 NUM_WARMUP = int(EPOCHS*(1/3)*(NUM_IN_OVERFIT//BATCH_SZ)) #constant 30% warmup-rate 
@@ -451,7 +453,7 @@ if(GENERATE_DATASET == False):
 trainloader = DataLoader(train,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 testloader = DataLoader(test,batch_size=BATCH_SZ,shuffle=True,num_workers=0)
 
-if NUM_IN_OVERFIT==None: #only if no cmd-argv provided
+if NUM_IN_OVERFIT==None and OVERFIT==True: #only if no cmd-argv provided
     NUM_IN_OVERFIT=16
     print("...No argument for length of DSET provided. Used N=16...")
     
@@ -820,6 +822,7 @@ def train_one_epoch(model,loss,trainloader,negative_print=False) -> float:
     false_count = 0
     counter = 0
     
+    tIOUli_holder = []
     
     for i, data in enumerate(trainloader):
         counter += 1
@@ -842,7 +845,8 @@ def train_one_epoch(model,loss,trainloader,negative_print=False) -> float:
             print("Number of negative entries [dead-relus?]: ",checkDeadRelu(activation["before_relu"]))
         
         #PASCAL CRITERIUM
-        noTrue,noFalse,_ = pascalACC(outputs,target)
+        noTrue,noFalse,IOU_li = pascalACC(outputs,target)
+        tIOUli_holder = tIOUli_holder + IOU_li
         correct_count += noTrue
         false_count += noFalse
         
@@ -854,12 +858,12 @@ def train_one_epoch(model,loss,trainloader,negative_print=False) -> float:
         nn.utils.clip_grad_value_(model.parameters(), clip_value=0.5) #experimentary
         model_opt.step()
         
-       
-        
-        
-    epochLoss = running_loss/counter 
-    epochAcc = correct_count/len(trainloader.dataset)
-    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model
+    IOU_mt = sum(tIOUli_holder)/len(tIOUli_holder)    
+    epochLoss = running_loss/len(trainloader.dataset) 
+    epochAcc = correct_count/len(trainloader.dataset) #TP / (complete trainingset length)    
+    
+    
+    return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,IOU_mt
 
 
 def train_one_epoch_w_val(model,loss,trainloader,valloader,negative_print=False,DEBUG=False) -> float: 
@@ -987,7 +991,11 @@ def train_one_epoch_w_val(model,loss,trainloader,valloader,negative_print=False,
     return epochLoss,correct_count,false_count,target,data["signal"],mask,epochAcc,model,epochValLoss,epochValAcc, IOU_mt, IOU_mv
 
 print("-----------------------------------------------------------------------------")
-print("Model parameters:\n tL: {}\n vL: {}\nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,len(valIDX),LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
+if(OVERFIT):
+    print("Model parameters:\n tL: {}\n vL: {}\nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,len(valIDX),LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
+else:
+    print("Model parameters:\n tL: {}\n \nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
+    
 #def train_number_of_epochs(EPOCHS,model,loss,trainloader,oTrainLoader,overfit=False,negative_print=False):
 epoch_number = 0
 epochLoss = 0 
@@ -1005,21 +1013,20 @@ for epoch in (pbar:=tqdm(range(EPOCHS))):
         if(OVERFIT):
             epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,valLoss,valAcc,IOU_t,IOU_v = train_one_epoch_w_val(model,loss_fn,trainloader,valloader,negative_print=False)
             tmpStr = f" | avg train loss {epochLoss:.4f} | train acc: {epochAcc:.4f} | avg val loss: {valLoss:.4f} | avg val acc: {valAcc:.4f} | Mean Train IOU: {IOU_t:.4f} | Mean Val IOU: {IOU_v:.4f} |"
+            epochValAccLI.append(valAcc)
+            epochValLossLI.append(valLoss)
+            valIOU.append(IOU_v)
             
         else:
-            epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model = train_one_epoch(model,loss_fn,trainloader,negative_print=False)
-            tmpStr = f" | avg train loss {epochLoss:.2f} | train acc: {epochAcc:.2f} | Mean Train IOU: {IOU_t:.2f} |"
+            epochLoss, correct_count, false_count,target,signal,mask,epochAcc,model,IOU_t = train_one_epoch(model,loss_fn,trainloader,negative_print=False)
+            tmpStr = f" | avg train loss {epochLoss:.2f} | train acc: {epochAcc:.2f} | Epoch train IOU {IOU_t:.2f} |"
             
         pbar.set_postfix_str(tmpStr)
         epochLossLI.append(epochLoss)
         epochAccLI.append(epochAcc)
-        epochValAccLI.append(valAcc)
-        epochValLossLI.append(valLoss)
-        valIOU.append(IOU_v)
         trainIOU.append(IOU_t)
         epoch_number += 1 
-        #if(epochAcc==1):
-         #   print("Perfect overfit at epoch {}".format(epoch_number+1))
+        
         
     except KeyboardInterrupt:
         print("Manual early stopping triggered")
@@ -1067,15 +1074,63 @@ def save_epochs(loss,acc,classString,root_dir,mode,params):
     if not os.path.exists(path):
         os.mkdir(path)
         print("Created subdir in: ",path)
+    
+    if(mode=="eval"):
+        path += "eval/"
+        if not os.path.exists(path):
+            os.mkdir(path)
+            print("Created subdir in: ",path)
+        torch.save(loss,path+classString+"_"+mode+"_losses.pth")
+        print("Saved loss results to: ",path+classString+"_"+mode+"_losses.pth")
+        torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
+        print("Saved accuracy results to: ",path+classString+"_"+mode+"_acc.pth")
+    else:
+        torch.save(loss,path+classString+"_"+mode+"_losses.pth")
+        print("Saved loss results to: ",path+classString+"_"+mode+"_losses.pth")
+        torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
+        print("Saved accuracy results to: ",path+classString+"_"+mode+"_acc.pth")
         
-    torch.save(loss,path+classString+"_"+mode+"_losses.pth")
-    print("Saved loss results to: ",path+classString+"_"+mode+"_losses.pth")
-    torch.save(acc,path+"/"+classString+"_"+mode+"_acc.pth")
-    print("Saved accuracy results to: ",path+classString+"_"+mode+"_acc.pth")
     return
 
-save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="train",params=[NLAYERS,NHEADS])
-if(OVERFIT):
+def save_IOU(IOU_li,classString,root_dir,params,mode):
+    path = root_dir + classString+"/"
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print("Created dir in: ",path)
+    path += "nL_" + str(params[0]) +"_nH_" + str(params[1]) +"/"+mode+"/"
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print("Created subdir in: ",path)
+        
+    torch.save(IOU_li,path+"epochIOU.pth")
+    print("Wrote epoch IOU's to scratch in :",path)
+    return None
+
+def save_model(model,classString,root_dir,params,mode):
+    path = root_dir + classString+"/"
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print("Created dir in: ",path)
+    path += "nL_" + str(params[0]) +"_nH_" + str(params[1]) +"/"+mode+"/"
+    if not os.path.exists(path):
+        os.mkdir(path)
+        print("Created subdir in: ",path)
+    torch.save(model.state_dict(),path+"model.pth")
+    print("Wrote finished model to scratch in :",path)
+    return None
+
+if(EVAL==0):
+    save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="result",params=[NLAYERS,NHEADS])
+    save_IOU(trainIOU,classString,root_dir,params=[NLAYERS,NHEADS])
+    save_model(model,classString,root_dir,params=[NLAYERS,NHEADS])
+
+if(EVAL==1):
+    save_epochs(epochLossLI,epochAccLI,classString,root_dir,mode="eval",params=[NLAYERS,NHEADS])
+    save_IOU(trainIOU,classString,root_dir,params=[NLAYERS,NHEADS],mode="eval")
+    save_model(model,classString,root_dir,params=[NLAYERS,NHEADS],mode="eval")
+    
+
+if(OVERFIT==True and EVAL==0):
     save_epochs(epochValLossLI,epochValAccLI,classString,root_dir,mode="val",params=[NLAYERS,NHEADS])
     save_split(trainloader,valloader,classString,root_dir,params=[NLAYERS,NHEADS])
     print("\nWrote train-val-split to scratch.\n")
@@ -1139,7 +1194,11 @@ medianModel = get_median_model(trainloader)
 model.eval()
 
 print("Entered evaluation-phase.")
-print("Model parameters:\n tL: {}\n vL: {}\nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,len(valIDX),LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
+if(OVERFIT):
+    print("Model parameters:\n tL: {}\n vL: {}\nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,len(valIDX),LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
+else:
+    print("Model parameters:\n tL: {} \nlrf: {}\n num_warmup: {}\n Dropout: {}\n Beta: {}\n NHEADS: {}\n NLAYERS: {}".format(NUM_IN_OVERFIT,LR_FACTOR,NUM_WARMUP,DROPOUT,BETA,NHEADS,NLAYERS))
+
 print("Evaluating overfit on ALL {} train instances".format(len(trainloader.dataset)))
 
 no_overfit_correct = 0
@@ -1192,8 +1251,13 @@ with torch.no_grad():
     print("\nMean model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_mean_correct,no_mean_false+no_mean_correct,no_mean_correct/(no_mean_false+no_mean_correct)))
     print("\nMedian model accuracy with PASCAL-criterium on overfit set: {}/{}, percentage: {}".format(no_med_correct,no_med_false+no_med_correct,no_med_correct/(no_med_false+no_med_correct)))
     print("\nMean IOU is {}".format(sum(IOU_tr_li)/len(IOU_tr_li)))
-    torch.save(train_save_struct,paramsString+classString+"_"+"test_on_train_results.pth")
-    print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_train_results.pth")
+    if(EVAL==0):
+        torch.save(train_save_struct,paramsString+classString+"_"+"test_on_train_results.pth")
+        print("\n   Results saved to file: ",paramsString+classString+"/"+classString+"_"+"test_on_train_results.pth")
+    else: 
+        torch.save(train_save_struct,paramsString+"eval/"+classString+"_"+"test_on_train_results.pth")
+        print("\n   Results saved to file: ",paramsString+"eval/"+classString+"/"+classString+"_"+"test_on_train_results.pth")
+        
     
 
 #2. TEST-LOOP ON TEST-SET
@@ -1264,10 +1328,12 @@ print("\nTransformer accuracy with PASCAL-criterium: {}/{}, percentage: {}".form
 print("\nMean model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_mean_correct,no_test_mean_false+no_test_mean_correct,testmeanAcc))    
 print("\nMedian model accuracy with PASCAL-criterium: {}/{}, percentage: {}".format(no_test_median_correct,no_test_median_false+no_test_median_correct,testmedianAcc))    
 print("\nMean IOU is {}".format(sum(IOU_te_li)/len(IOU_te_li)))
-torch.save(correct_false_list,paramsString+classString+"_"+"test_on_test_results.pth")
-print("\n   Results saved to file: ",root_dir+classString+"/"+classString+"_"+"test_on_test_results.pth")
-    
-
+if(EVAL==0):
+    torch.save(correct_false_list,paramsString+classString+"_"+"test_on_test_results.pth")
+    print("\n   Results saved to file: ",paramsString+classString+"/"+classString+"_"+"test_on_test_results.pth")
+else:    
+    torch.save(correct_false_list,paramsString+"eval/"+classString+"_"+"test_on_test_results.pth")
+    print("\n   Results saved to file: ",paramsString+"eval/"+classString+"/"+classString+"_"+"test_on_test_results.pth")
 
 
 """
